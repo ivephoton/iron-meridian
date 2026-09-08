@@ -247,8 +247,8 @@ let boss = null;
 const player = {
   x:W/2, y:H-120, vx:0, vy:0,
   alive:true, dead:0, invuln:0,
-  lives:3, bombs:3, weapon:'vulcan', level:1,
-  fireT:0, slow:false, bombT:0, engine:0
+  lives:3, bombs:3, bombStock:3, weapon:'vulcan', level:1,
+  fireT:0, slow:false, bombT:0, engine:0, autofire:false
 };
 
 function resetRun(){
@@ -259,7 +259,9 @@ function resetRun(){
   player.x=W/2; player.y=H-120; player.vx=player.vy=0;
   player.alive=true; player.dead=0; player.invuln=120;
   player.lives = Math.max(1, G.diff.lives + G.pilot.life);
-  player.bombs = 2 + G.pilot.bomb;
+  player.bombStock = 2 + G.pilot.bomb;
+  player.bombs = player.bombStock;
+  player.autofire = false;
   player.weapon='vulcan'; player.level=1; player.fireT=0; player.bombT=0;
 }
 
@@ -963,6 +965,8 @@ function updatePlayer(){
         player.alive = true; player.invuln = 130;
         player.x = W/2; player.y = H-100;
         player.level = Math.max(1, player.level - 1);
+        player.bombs = Math.max(player.bombs, player.bombStock);   // restocked on respawn
+        player.bombT = 0;
       } else {
         gameOver();
       }
@@ -995,7 +999,8 @@ function updatePlayer(){
   player.x = clamp(player.x, 14, W-14);
   player.y = clamp(player.y, 24, H-20);
 
-  if(isDown('fire') || touch.active) playerFire();
+  if(tapped('fire')) player.autofire = !player.autofire;
+  if(player.autofire || isDown('fire') || touch.active) playerFire();
   if(tapped('bomb')) useBomb();
   player.engine = (player.engine + 1) % 8;
 
@@ -1388,6 +1393,8 @@ function drawHUD(){
     ctx.fillStyle = player.bombT>0 ? '#33506b' : C.glow;
     ctx.fillRect(-4,-4,8,8); ctx.restore();
   }
+
+  if(player.autofire) txt('AUTO', 262, H-13, 10, C.amber, 'left', 700, 1.4);
 
   const w = WEAPONS[player.weapon];
   txt(w.name, W-12, H-19, 13, w.color, 'right', 700, 1.4);

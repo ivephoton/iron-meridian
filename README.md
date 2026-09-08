@@ -9,7 +9,7 @@ A vertical scrolling shooter in the Raiden mould. One HTML file, no build step, 
 | | |
 |---|---|
 | Move | Arrow keys or WASD, or drag anywhere on screen |
-| Fire | Z, J or space — hold it. Touch fires automatically |
+| Fire | Z, J or space — tap to lock the guns on, tap again to stop. Holding works too. Touch fires automatically |
 | Bomb | X or K, or the pad in the bottom right on touch |
 | Precision | Hold shift or C to halve your speed and reveal your hitbox |
 | Pause / mute | P / M. On touch, the pip in the top right pauses |
@@ -28,7 +28,7 @@ Five of them, each with five power levels.
 
 A lettered pod swaps your weapon; picking up your current letter, or a gold P, raises its level. Switching costs you a level, so a pod you don't want is worth dodging. At level five the pods pay out points instead. A blue B is a spare bomb, and a green 1 is a spare ship.
 
-Bombs clear every bullet on screen for points, hit everything alive for heavy damage, and leave you briefly untouchable. Dying costs you a life and a weapon level.
+Bombs clear every bullet on screen for points, hit everything alive for heavy damage, and leave you briefly untouchable. Dying costs you a life and a weapon level, but your bombs are restocked with the new ship.
 
 ## Pilots
 
