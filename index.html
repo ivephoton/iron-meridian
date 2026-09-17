@@ -1166,7 +1166,9 @@ const ETYPES = {
   frigate: { hp: 95,  r: 34, score: 3000, drop: 0.45,  size: 3.5 },
 };
 
-const hpScale = () => Run.diff.hull * (1 + 0.085 * (Run.wave - 1));
+// Every enemy and boss hull is multiplied by this, on every wave and difficulty.
+const ENEMY_HP_SCALE = 0.7;
+const hpScale = () => ENEMY_HP_SCALE * Run.diff.hull * (1 + 0.085 * (Run.wave - 1));
 const fireScale = () => Run.diff.fireInterval * Math.max(0.5, 1 - 0.03 * (Run.wave - 1));
 const bspd = v => v * Run.diff.bulletSpeed * (1 + Math.min(0.35, 0.018 * (Run.wave - 1)));
 const dens = () => Run.diff.density * (1 + Math.min(0.5, 0.035 * (Run.wave - 1)));
@@ -1637,7 +1639,7 @@ function spawnBoss() {
   const num = Run.wave / 5;                    // 1, 2, 3...
   const design = (num - 1) % BOSSES.length;
   const def = BOSSES[design];
-  const hp = def.hp * Run.diff.bossHp * (1 + 0.25 * (num - 1));
+  const hp = ENEMY_HP_SCALE * def.hp * Run.diff.bossHp * (1 + 0.25 * (num - 1));
   const e = spawnEnemy('gunship', W / 2, -150, {
     boss: true, design, hp, maxHp: hp, r: 40, score: 0, drop: 0, size: 5, noFace: true,
     circles: def.circles, invuln: true, name: def.name,
