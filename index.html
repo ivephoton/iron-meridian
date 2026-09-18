@@ -26,9 +26,14 @@ const W = 480, H = 720;
 
 // ---- Tuning ---------------------------------------------------------------
 // Health of every enemy and boss, on every wave and difficulty.
-const ENEMY_HP_SCALE = 0.7;
+const ENEMY_HP_SCALE = 0.385;
+// Speed of every enemy and boss bullet, on every wave and difficulty.
+const ENEMY_BULLET_SCALE = 0.805;
 // Bombs every pilot starts with, before pilot bonuses.
 const BASE_BOMBS = 3;
+// Power levels per weapon, and levels of wingmen.
+const MAX_LEVEL = 10;
+const WING_MAX = 3;
 // Seconds you have between kills to keep a chain alive.
 const CHAIN_WINDOW = 1.6;
 
@@ -62,16 +67,17 @@ const PILOTS = [
     hull: '#4b3f6b', trim: '#c9a7ff', canopy: '#ff7de9' },
 ];
 
-// Base health, collision radius, score and drop chance for each enemy.
+// Base health, collision radius, score, pod drop chance, bomb-token chance
+// and spare-ship chance for each enemy. Only the heavy ones carry either.
 const ETYPES = {
   dart:     { name: 'Dart',        hp: 3,   r: 11, score: 100,  drop: 0.03 },
   kamikaze: { name: 'Kamikaze',    hp: 4,   r: 10, score: 150,  drop: 0.02 },
   drone:    { name: 'Drone',       hp: 11,  r: 14, score: 300,  drop: 0.06 },
-  tank:     { name: 'Tank',        hp: 16,  r: 15, score: 400,  drop: 0.06, ground: true },
-  spinner:  { name: 'Spinner',     hp: 28,  r: 18, score: 600,  drop: 0.09 },
-  carrier:  { name: 'Pod carrier', hp: 24,  r: 22, score: 1000, drop: 1 },
-  gunship:  { name: 'Gunship',     hp: 60,  r: 27, score: 1500, drop: 0.16 },
-  frigate:  { name: 'Frigate',     hp: 150, r: 40, score: 3000, drop: 0.35 },
+  tank:     { name: 'Tank',        hp: 16,  r: 15, score: 400,  drop: 0.06, ground: true, bomb: 0.05, life: 0.01 },
+  spinner:  { name: 'Spinner',     hp: 28,  r: 18, score: 600,  drop: 0.09, bomb: 0.12, life: 0.015 },
+  carrier:  { name: 'Pod carrier', hp: 24,  r: 22, score: 1000, drop: 1,               life: 0.04 },
+  gunship:  { name: 'Gunship',     hp: 60,  r: 27, score: 1500, drop: 0.16, bomb: 0.3,  life: 0.03 },
+  frigate:  { name: 'Frigate',     hp: 150, r: 40, score: 3000, drop: 0.35, bomb: 0.55, life: 0.07 },
 };
 
 // Base health, hitboxes (relative to the boss centre) and pattern names.
@@ -90,13 +96,22 @@ const BOSSES = [
     patterns: [ 'Rain Lanes', 'Bloom Orbs', 'Rose' ] },
 ];
 
-// The five weapons, in pod cycle order.
+// The seven weapons, in pod cycle order.
 const WEAPONS = [
   { key: 'V', name: 'VULCAN', kind: 'Spread cannon',     color: '#ff9a3c', glow: '#ffd08a' },
   { key: 'L', name: 'LANCE',  kind: 'Piercing beams',    color: '#46e0ff', glow: '#b8f5ff' },
   { key: 'P', name: 'PLASMA', kind: 'Splash orbs',       color: '#c26bff', glow: '#e6c4ff' },
   { key: 'M', name: 'HORNET', kind: 'Seeking warheads',  color: '#62f28a', glow: '#c6ffd6' },
   { key: 'S', name: 'ARC',    kind: 'Chain lightning',   color: '#8fa8ff', glow: '#e0e8ff' },
+  { key: 'F', name: 'FLAK',   kind: 'Airburst shells',   color: '#ff6b5a', glow: '#ffd0c6' },
+  { key: 'R', name: 'RIPPER', kind: 'Ricocheting blades', color: '#37e0c8', glow: '#c0fff2' },
+];
+
+// Wingmen (僚机) fly beside you. Their token cycles through these three guns.
+const WING_TYPES = [
+  { key: 'I', name: 'NEEDLE', kind: 'Straight pellets',  color: '#ffe066', glow: '#fff4c2' },
+  { key: 'X', name: 'SPRAY',  kind: 'Angled fan',        color: '#ff8ad8', glow: '#ffd4f1' },
+  { key: 'H', name: 'HOMER',  kind: 'Slow seekers',      color: '#8ef5d0', glow: '#d8fff2' },
 ];
 
 const REGIONS = [ 'COASTLINE', 'FOUNDRY', 'DUNE SEA', 'NIGHT GRID' ];
@@ -104,12 +119,14 @@ const REGIONS = [ 'COASTLINE', 'FOUNDRY', 'DUNE SEA', 'NIGHT GRID' ];
 // Other constants that shape the feel, kept together for easy tweaking.
 const GROUND_SPEED = 38;          // px per second
 const POD_SPEED = 78;
-const POD_BOUNCES = 3;            // survives this many, pops on the next
-const POD_CYCLE = 10;             // seconds before a weapon capsule changes letter
+const POD_CYCLE = 5;              // seconds before a cycling token changes to the next type
+const POD_LAPS = 1;               // a token disappears once it has shown every type this many times
 const BOMB_DURATION = 1.5;
 const BOMB_INVULN = 2.8;
 const BOMB_DPS = 42;
 const RESPAWN_INVULN = 3;
+const MAX_BOMBS = 10;             // most bombs you can carry
+const MAX_SHIPS = 9;              // most ships you can hold in reserve
 const MAX_MULTIPLIER = 8;
 
 // ---- Palette ---------------------------------------------------------------
@@ -764,6 +781,9 @@ function buildSprites() {
   SPR.needle = capsule(14, 4.5, '#ff9a3c', '#fffaf0', true);
   SPR.vulcan = capsule(15, 5, '#ffb347', '#fffbe8', false);
   SPR.nose = capsule(10, 3.4, '#8dffae', '#f4fff6', false);
+  SPR.frag = capsule(9, 3.4, '#ffd166', '#fffbe8', false);
+  SPR.wingI = capsule(11, 4, '#ffe066', '#fff9d8', false);
+  SPR.wingX = capsule(10, 4, '#ff8ad8', '#ffe2f6', false);
   SPR.plasma = glowDisc(7, 'rgba(190,90,255,0.6)', '#c985ff', '#ffffff', 16);
   SPR.gGold = softGlow(32, 'rgba(255,200,90,1)');
   SPR.gOrange = softGlow(32, 'rgba(255,130,40,1)');
@@ -1328,6 +1348,7 @@ function resetPlayer() {
   Object.assign(player, {
     pilot: pl, x: W / 2, y: H + 40, vx: 0, vy: 0, bank: 0, t: 0,
     weapon: 0, level: 1,
+    wingLevel: 0, wingType: 0, wings: [],
     ships: Math.max(1, d.ships + pl.ships), bombs: BASE_BOMBS + pl.bombs,
     alive: true, invuln: 2.5, respawnT: 0, enterT: 0.9,
     fireT: 0, fireT2: 0, slow: false, coreGlow: 0,
@@ -1338,7 +1359,7 @@ function respawn() {
   const p = player;
   p.alive = true; p.x = W / 2; p.y = H + 40; p.vx = p.vy = 0; p.bank = 0;
   p.enterT = 0.9; p.invuln = RESPAWN_INVULN;
-  p.bombs = startBombs();
+  p.bombs = Math.max(p.bombs, startBombs());
   Pointer.dx = Pointer.dy = 0;
   Sound.play('respawn');
   Music.play(boss ? 'boss' : 'combat');
@@ -1357,6 +1378,8 @@ function killPlayer() {
   Game.chain = 0; Game.mult = 1; Game.lastKill = -99;
   const lost = Math.min(2, p.level - 1);
   p.level -= lost;
+  if (p.wingLevel > 0) p.wingLevel--;
+  p.wings.length = 0;
   if (lost > 0) dropPod(p.x, Math.min(p.y - 10, H - 40), 'P');
   p.ships--;
   if (p.ships <= 0) { p.ships = 0; Game.gameOverT = 2.8; }
@@ -1419,21 +1442,24 @@ function updatePlayer(dt) {
 
 // ---- Weapons -----------------------------------------------------------------------------
 // [x offset, angle in degrees] per level
-const VULCAN_PAT = [
-  [[0, 0]],
-  [[-6, 0], [6, 0]],
-  [[0, 0], [-8, -7], [8, 7]],
-  [[-5, -3], [5, 3], [-10, -11], [10, 11]],
-  [[0, 0], [-7, -6], [7, 6], [-11, -13], [11, 13]],
-];
-const LANCE_PAT = [[0], [-7, 7], [0, -12, 12], [-6, 6, -18, 18], [0, -12, 12, -24, 24]];
-const PLASMA_PAT = [
-  { orbs: [[0, 0]], r: 6, splash: 30 },
-  { orbs: [[0, 0]], r: 7.5, splash: 40 },
-  { orbs: [[-10, 0], [10, 0]], r: 7.5, splash: 46 },
-  { orbs: [[-12, -4], [12, 4]], r: 8.5, splash: 54 },
-  { orbs: [[0, 0], [-8, -7], [8, 7]], r: 9, splash: 62 },
-];
+// Level tables, one entry per level 1-10.
+const LV = {
+  vulcanN:   [1, 2, 3, 4, 5, 5, 6, 6, 7, 7],
+  vulcanSp:  [0, 4, 8, 11, 13, 14, 15, 16, 17, 18],
+  lanceN:    [1, 2, 3, 4, 5, 5, 6, 6, 7, 7],
+  plasmaN:   [1, 1, 2, 2, 3, 3, 3, 4, 4, 5],
+  plasmaSpl: [30, 38, 45, 52, 60, 66, 72, 78, 84, 92],
+  hornetN:   [2, 3, 4, 5, 6, 6, 7, 7, 8, 8],
+  arcN:      [2, 3, 4, 5, 6, 6, 7, 7, 8, 8],
+  flakN:     [1, 1, 1, 2, 2, 2, 2, 3, 3, 3],
+  flakFrag:  [6, 7, 8, 9, 10, 11, 12, 13, 14, 16],
+  ripperN:   [1, 1, 2, 2, 2, 3, 3, 3, 4, 4],
+  ripperB:   [3, 3, 4, 4, 5, 5, 6, 6, 7, 8],
+};
+// Levels past five add a little damage rather than more streams.
+const overLv = L => 1 + Math.max(0, L - 5) * 0.05;
+// -1 .. 1 across n emitters
+const fan = (i, n) => n <= 1 ? 0 : (i / (n - 1)) * 2 - 1;
 
 function mkShot(kind, x, y, deg, speed, dmg, extra) {
   const a = deg * DEG;
@@ -1452,51 +1478,158 @@ function targetable() {
 }
 
 function fireWeapon(p) {
-  const pl = p.pilot, dm = pl.damage, fr = pl.fireRate, L = p.level;
+  const pl = p.pilot, dm = pl.damage * overLv(p.level), fr = pl.fireRate, L = p.level;
   const x = p.x, y = p.y - 14;
   let guard = 0;
   switch (p.weapon) {
-    case 0: // Vulcan
+    case 0: { // Vulcan
+      const n = LV.vulcanN[L - 1], sp = LV.vulcanSp[L - 1];
       while (p.fireT <= 0 && guard++ < 3) {
         p.fireT += 0.075 / fr;
-        for (const [ox, a] of VULCAN_PAT[L - 1]) mkShot('vulcan', x + ox, y, a, 840, 0.8 * dm, { r: 4 * (dm > 1.2 ? 1.2 : 1) });
+        for (let i = 0; i < n; i++) { const f = fan(i, n); mkShot('vulcan', x + f * 11, y, f * sp, 840, 0.8 * dm, { r: 4 }); }
         Sound.play('shot', 0);
       }
       break;
-    case 1: // Lance
+    }
+    case 1: { // Lance
+      const n = LV.lanceN[L - 1];
       while (p.fireT <= 0 && guard++ < 3) {
         p.fireT += 0.14 / fr;
-        for (const ox of LANCE_PAT[L - 1]) mkShot('beam', x + ox, y - 6, 0, 1150, 1.7 * dm, { hits: [], len: 34 });
+        for (let i = 0; i < n; i++) mkShot('beam', x + (i - (n - 1) / 2) * 12, y - 6, 0, 1150, 1.7 * dm, { hits: [], len: 34 });
         Sound.play('shot', 1);
       }
       break;
-    case 2: // Plasma
+    }
+    case 2: { // Plasma
+      const n = LV.plasmaN[L - 1], splash = LV.plasmaSpl[L - 1];
       while (p.fireT <= 0 && guard++ < 3) {
         p.fireT += 0.3 / fr;
-        const pat = PLASMA_PAT[L - 1];
-        for (const [ox, a] of pat.orbs) mkShot('orb', x + ox, y, a, 430, 2.2 * dm, { r: pat.r, splash: pat.splash, sdmg: 1.6 * dm, wob: rand(TAU) });
+        for (let i = 0; i < n; i++) {
+          const f = fan(i, n);
+          mkShot('orb', x + f * 11, y, f * 7, 430, 2.2 * dm, { r: 6 + L * 0.35, splash, sdmg: 1.6 * dm, wob: rand(TAU) });
+        }
         Sound.play('shot', 2);
       }
       break;
-    case 3: // Hornet
+    }
+    case 3: { // Hornet
+      const noses = L >= 8 ? 3 : L >= 3 ? 2 : 1;
       while (p.fireT <= 0 && guard++ < 3) {
         p.fireT += 0.1 / fr;
-        if (L >= 3) { mkShot('nose', x - 5, y, 0, 860, 0.6 * dm); mkShot('nose', x + 5, y, 0, 860, 0.6 * dm); }
-        else mkShot('nose', x, y, 0, 860, 0.6 * dm);
+        for (let i = 0; i < noses; i++) mkShot('nose', x + fan(i, noses) * 6, y, 0, 860, 0.6 * dm);
         Sound.play('shot', 3);
       }
       if (p.fireT2 <= 0) {
         p.fireT2 = Math.max(p.fireT2, -0.05) + 0.55 / fr;
-        launchHornets(p, L + 1, 2.4 * dm);
+        launchHornets(p, LV.hornetN[L - 1], 2.4 * dm);
       }
       break;
+    }
     case 4: // Arc
       while (p.fireT <= 0 && guard++ < 3) {
         p.fireT += 0.18 / fr;
         fireArc(p, 2.2 * dm);
       }
       break;
+    case 5: { // Flak: shells that burst into shrapnel
+      const n = LV.flakN[L - 1];
+      while (p.fireT <= 0 && guard++ < 3) {
+        p.fireT += 0.42 / fr;
+        for (let i = 0; i < n; i++) {
+          const f = fan(i, n);
+          mkShot('shell', x + f * 12, y, f * 7, 420, 1.6 * dm, { r: 5.5, fuse: 0.42, frags: LV.flakFrag[L - 1], fdmg: 0.75 * dm, flife: 0.58 + L * 0.02, spin: rand(TAU) });
+        }
+        Sound.play('shot', 5);
+      }
+      break;
+    }
+    case 6: { // Ripper: blades that ricochet off the walls
+      const n = LV.ripperN[L - 1];
+      while (p.fireT <= 0 && guard++ < 3) {
+        p.fireT += 0.26 / fr;
+        for (let i = 0; i < n; i++) {
+          const f = fan(i, n);
+          mkShot('blade', x + f * 10, y, f * 13, 520, 1.5 * dm, { r: 8, life: 2.4, bounces: LV.ripperB[L - 1], hits: [], spin: rand(TAU) });
+        }
+        Sound.play('shot', 6);
+      }
+      break;
+    }
   }
+}
+
+// ---- Wingmen (僚机) -------------------------------------------------------------------------
+const WING_RATE = [1, 1.55, 1.75];
+const WING_DMG = [1, 1.15, 1.3];
+const wingCount = level => level === 0 ? 0 : level >= 3 ? 4 : 2;
+
+function updateWings(dt) {
+  const p = player;
+  const want = p.alive ? wingCount(p.wingLevel) : 0;
+  while (p.wings.length > want) p.wings.pop();
+  while (p.wings.length < want) {
+    const i = p.wings.length;
+    p.wings.push({ side: i % 2 ? 1 : -1, idx: i < 2 ? 0 : 1, x: p.x, y: p.y + 12, fireT: rand(0, 0.15), t: rand(TAU) });
+  }
+  if (!p.wings.length) return;
+  const firing = p.alive && (Input.held('fire') || Game.autoFire || Pointer.dragging);
+  const rate = WING_RATE[p.wingLevel - 1] || 1, dmgF = WING_DMG[p.wingLevel - 1] || 1;
+  const type = p.wingType;
+  for (const wg of p.wings) {
+    wg.t += dt;
+    const tx = clamp(p.x + wg.side * (30 + wg.idx * 17), 8, W - 8);
+    const ty = p.y + 12 + wg.idx * 13 + Math.sin(wg.t * 3 + wg.idx) * 2;
+    const k = 1 - Math.exp(-7 * dt);
+    wg.x += (tx - wg.x) * k; wg.y += (ty - wg.y) * k;
+    wg.fireT -= dt;
+    if (!firing || wg.fireT > 0) continue;
+    if (type === 0) {
+      wg.fireT += 0.16 / rate;
+      mkShot('wing', wg.x, wg.y - 8, 0, 820, 0.5 * dmgF, { r: 3.4, spr: 'wingI' });
+    } else if (type === 1) {
+      wg.fireT += 0.3 / rate;
+      for (const a of [-20, 20]) mkShot('wing', wg.x, wg.y - 8, a, 700, 0.45 * dmgF, { r: 3.4, spr: 'wingX' });
+    } else {
+      wg.fireT += 0.75 / rate;
+      const cands = targetable();
+      let best = null, bd = Infinity;
+      for (const e of cands) { const d = dist2(wg.x, wg.y, e.x, e.y); if (d < bd) { bd = d; best = e; } }
+      const s = mkShot('missile', wg.x, wg.y - 6, wg.side * 18, 170, 0.9 * dmgF, { r: 4.5, target: best, turn: 4.5, speed: 170, life: 3, trailT: 0, wing: true });
+      s.ang = (wg.side * 18 - 90) * DEG;
+    }
+    if (wg.idx === 0 && wg.side < 0) Sound.play('shot', type === 2 ? 3 : 0);
+  }
+}
+
+function drawWings() {
+  const p = player;
+  if (!p.wings.length) return;
+  const wt = WING_TYPES[p.wingType];
+  const blink = p.invuln > 0 && Math.floor(p.invuln * 14) % 2 === 0;
+  for (const wg of p.wings) {
+    ctx.save();
+    ctx.globalAlpha = blink ? 0.4 : 1;
+    ctx.translate(wg.x, wg.y);
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.beginPath(); ctx.ellipse(9, 15, 8, 6, 0, 0, TAU); ctx.fill();
+    const tilt = clamp((wg.x - p.x - wg.side * 30) * 0.01, -0.3, 0.3);
+    ctx.rotate(tilt);
+    ctx.fillStyle = '#7d879a';
+    ctx.beginPath();
+    ctx.moveTo(0, -11); ctx.lineTo(6, -3); ctx.lineTo(9, 7); ctx.lineTo(0, 4); ctx.lineTo(-9, 7); ctx.lineTo(-6, -3);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(10,14,24,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = wt.color;
+    ctx.beginPath(); ctx.arc(0, -3, 2.6, 0, TAU); ctx.fill();
+    ctx.globalCompositeOperation = 'lighter';
+    const gr = ctx.createLinearGradient(0, 5, 0, 13);
+    gr.addColorStop(0, 'rgba(255,240,200,0.8)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gr;
+    ctx.beginPath(); ctx.moveTo(-2, 4); ctx.lineTo(2, 4); ctx.lineTo(0, 12 + Math.random() * 3); ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
 }
 
 function launchHornets(p, n, dmg) {
@@ -1531,16 +1664,21 @@ function jagged(points) {
   return out;
 }
 
+// The bolt thickens with the weapon's level: 2px at level 1, 5px at level 10.
+const arcWidth = L => 1.66 + L * 0.34;
+
 function fireArc(p, dmg0) {
-  const n = p.level + 1;
+  const n = LV.arcN[p.level - 1];
   const cands = targetable();
   Sound.play('arc');
   if (!cands.length) {
-    arcs.push({ pts: jagged([[p.x, p.y - 16], [p.x + rand(-14, 14), p.y - rand(40, 70)]]), life: 0.07, max: 0.07, faint: true });
+    arcs.push({ pts: jagged([[p.x, p.y - 16], [p.x + rand(-14, 14), p.y - rand(40, 70)]]), life: 0.07, max: 0.07, faint: true, w: arcWidth(p.level) });
     return;
   }
   const used = new Set();
-  const split = p.level >= 3 ? [Math.ceil(n / 2), Math.floor(n / 2)] : [n];
+  const chains = p.level >= 8 ? 3 : p.level >= 3 ? 2 : 1;
+  const split = [];
+  for (let c = 0; c < chains; c++) split.push(Math.floor(n / chains) + (c < n % chains ? 1 : 0));
   for (const count of split) {
     let fx = p.x, fy = p.y - 16, dmg = dmg0;
     const pts = [[fx, fy]];
@@ -1559,7 +1697,7 @@ function fireArc(p, dmg0) {
       part({ k: 'glow', x: hx, y: hy, r: 12, life: 0.1, max: 0.1, spr: SPR.gBlue });
       fx = hx; fy = hy; dmg *= 0.72;
     }
-    if (pts.length > 1) arcs.push({ pts: jagged(pts), life: 0.09, max: 0.09 });
+    if (pts.length > 1) arcs.push({ pts: jagged(pts), life: 0.09, max: 0.09, w: arcWidth(p.level) });
   }
 }
 
@@ -1594,10 +1732,36 @@ function detonateOrb(s, direct) {
   }
 }
 
+function burstShell(s) {
+  if (s.dead && !s.bursting) return;
+  s.dead = true;
+  const n = s.frags;
+  for (let i = 0; i < n; i++) {
+    const deg = lerp(-75, 75, n <= 1 ? 0.5 : i / (n - 1)) + rand(-4, 4);
+    mkShot('frag', s.x, s.y, deg, rand(520, 620), s.fdmg, { r: 3.6, life: s.flife });
+  }
+  part({ k: 'glow', x: s.x, y: s.y, r: 26, life: 0.2, max: 0.2, spr: SPR.gOrange });
+  part({ k: 'ring', x: s.x, y: s.y, r: 4, grow: 240, life: 0.22, max: 0.22, c: '255,180,140', w: 2 });
+  Sound.play('splash');
+}
+
+// A blade may hit the same enemy again after a short delay, so a ricochet still counts.
+function bladeMayHit(s, e) {
+  for (const h of s.hits) if (h.e === e) { if (Game.time - h.t < 0.35) return false; h.t = Game.time; return true; }
+  s.hits.push({ e, t: Game.time });
+  return true;
+}
+
 function updateShots(dt) {
   for (const s of shots) {
     s.life -= dt;
-    if (s.kind === 'missile') {
+    if (s.kind === 'shell') {
+      s.spin += dt * 9;
+      s.fuse -= dt;
+      if (s.fuse <= 0) { burstShell(s); continue; }
+    } else if (s.kind === 'blade') {
+      s.spin += dt * 20;
+    } else if (s.kind === 'missile') {
       if (!s.target || s.target.dead || (s.target.isBoss && (boss !== s.target || boss.phase !== 'fight'))) {
         s.target = null;
         let best = null, bd = Infinity;
@@ -1614,6 +1778,17 @@ function updateShots(dt) {
       if (s.trailT <= 0) { s.trailT = 0.03; part({ k: 'trail', x: s.x, y: s.y, r: 3, life: 0.35, max: 0.35 }); }
     }
     s.x += s.vx * dt; s.y += s.vy * dt;
+    if (s.kind === 'blade') {
+      let hitWall = false;
+      if (s.x < s.r) { s.x = s.r; s.vx = Math.abs(s.vx); hitWall = true; }
+      else if (s.x > W - s.r) { s.x = W - s.r; s.vx = -Math.abs(s.vx); hitWall = true; }
+      if (s.y < s.r) { s.y = s.r; s.vy = Math.abs(s.vy); hitWall = true; }
+      if (hitWall) {
+        s.bounces--;
+        sparks(s.x, s.y, 3, '160,255,235', 90);
+        if (s.bounces < 0) { s.dead = true; continue; }
+      }
+    }
     if (s.life <= 0 || s.y < -50 || s.y > H + 40 || s.x < -40 || s.x > W + 40) { s.dead = true; continue; }
 
     if (s.kind === 'beam') {
@@ -1636,6 +1811,23 @@ function updateShots(dt) {
       }
       continue;
     }
+    if (s.kind === 'blade') {
+      for (const e of enemies) {
+        if (e.dead || e.t < 0 || e.y < -e.r * 0.5) continue;
+        const rr = e.r + s.r;
+        if (dist2(s.x, s.y, e.x, e.y) < rr * rr && bladeMayHit(s, e)) {
+          sparks(s.x, s.y, 2, '160,255,235', 80);
+          damageTarget(e, s.dmg, s.x, s.y);
+        }
+      }
+      if (boss && boss.phase !== 'dying') {
+        for (const hb of boss.hb) {
+          const rr = hb.r + s.r;
+          if (dist2(s.x, s.y, hb.x, hb.y) < rr * rr && bladeMayHit(s, boss)) { sparks(s.x, s.y, 2, '160,255,235', 80); damageBoss(s.dmg, s.x, s.y); break; }
+        }
+      }
+      continue;
+    }
     let hit = null;
     for (const e of enemies) {
       if (e.dead || e.t < 0 || e.y < -e.r * 0.5) continue;
@@ -1647,6 +1839,11 @@ function updateShots(dt) {
     }
     if (hit) {
       if (s.kind === 'orb') { detonateOrb(s, hit); continue; }
+      if (s.kind === 'shell') {
+        if (hit.isBoss) damageBoss(s.dmg, s.x, s.y); else damageTarget(hit, s.dmg, s.x, s.y);
+        burstShell(s);
+        continue;
+      }
       s.dead = true;
       if (hit.isBoss) damageBoss(s.dmg, s.x, s.y - 4); else damageTarget(hit, s.dmg, s.x, s.y);
       if (s.kind === 'missile') explosion(s.x, s.y, 0.5, 'fire');
@@ -1662,6 +1859,36 @@ function drawShots() {
     switch (s.kind) {
       case 'vulcan': blitRot(SPR.vulcan, s.x, s.y, s.ang); break;
       case 'nose': blit(SPR.nose, s.x, s.y); break;
+      case 'wing': blitRot(SPR[s.spr], s.x, s.y, s.ang); break;
+      case 'frag': blitRot(SPR.frag, s.x, s.y, s.ang); break;
+      case 'shell': {
+        blit(SPR.gOrange, s.x, s.y, 0.35);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(s.spin);
+        ctx.fillStyle = '#2b2f38';
+        roundRect(-4.5, -8, 9, 16, 4); ctx.fill();
+        ctx.strokeStyle = '#ff6b5a'; ctx.lineWidth = 1.6; ctx.stroke();
+        ctx.fillStyle = '#ffd0c6'; ctx.fillRect(-1.2, -9.5, 2.4, 4);
+        ctx.restore();
+        ctx.globalCompositeOperation = 'lighter';
+        break;
+      }
+      case 'blade': {
+        blit(SPR.gCyan, s.x, s.y, 0.55);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(s.spin);
+        ctx.fillStyle = '#d8fff6';
+        ctx.beginPath();
+        for (let i = 0; i < 12; i++) {
+          const a = i / 12 * TAU, r = i % 2 ? 4.5 : 9;
+          if (i === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r); else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+        }
+        ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#37e0c8'; ctx.beginPath(); ctx.arc(0, 0, 3, 0, TAU); ctx.fill();
+        ctx.restore();
+        ctx.globalCompositeOperation = 'lighter';
+        break;
+      }
       case 'orb': {
         const k = s.r / 7;
         blit(SPR.plasma, s.x + Math.sin(s.life * 30 + s.wob) * 1.2, s.y, k * (1 + Math.sin(s.life * 40) * 0.08));
@@ -1678,8 +1905,8 @@ function drawShots() {
         ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(s.ang);
         ctx.fillStyle = 'rgba(255,170,80,0.8)'; ctx.beginPath(); ctx.moveTo(-5, -2.2); ctx.lineTo(-12 - Math.random() * 4, 0); ctx.lineTo(-5, 2.2); ctx.fill();
         ctx.globalCompositeOperation = 'source-over';
-        ctx.fillStyle = '#d8f5de'; ctx.fillRect(-5, -2, 9, 4);
-        ctx.fillStyle = '#62f28a'; ctx.beginPath(); ctx.moveTo(4, -2); ctx.lineTo(8, 0); ctx.lineTo(4, 2); ctx.fill();
+        ctx.fillStyle = s.wing ? '#eafff8' : '#d8f5de'; ctx.fillRect(-5, -2, 9, 4);
+        ctx.fillStyle = s.wing ? WING_TYPES[2].color : '#62f28a'; ctx.beginPath(); ctx.moveTo(4, -2); ctx.lineTo(8, 0); ctx.lineTo(4, 2); ctx.fill();
         ctx.restore();
         ctx.globalCompositeOperation = 'lighter';
         break;
@@ -1689,8 +1916,9 @@ function drawShots() {
   // chain lightning
   for (const a of arcs) {
     const al = a.life / a.max;
-    for (const [w, col] of [[6, 'rgba(110,140,255,' + (0.35 * al) + ')'], [2.2, 'rgba(235,242,255,' + al + ')']]) {
-      if (a.faint && w > 3) continue;
+    const core = a.w || 2.2;
+    for (const [w, col] of [[core * 2.8, 'rgba(110,140,255,' + (0.35 * al) + ')'], [core, 'rgba(235,242,255,' + al + ')']]) {
+      if (a.faint && w > core) continue;
       ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineJoin = 'round';
       ctx.beginPath();
       a.pts.forEach((pt, i) => { if (i === 0) ctx.moveTo(pt[0], pt[1]); else ctx.lineTo(pt[0], pt[1]); });
@@ -1752,12 +1980,15 @@ function killEnemy(e, silent) {
   if (!silent) {
     registerKill(e.et.score, e.x, e.y);
     if (!e.noDrop && (e.type === 'carrier' || chance(e.et.drop * diff().dropRate))) dropPod(e.x, e.y);
+    // Heavy enemies also carry a spare bomb, and sometimes a spare ship.
+    if (!e.noDrop && e.et.bomb && chance(e.et.bomb * diff().dropRate)) dropPod(e.x, e.y, 'B');
+    if (!e.noDrop && e.et.life && chance(e.et.life * diff().dropRate)) dropPod(e.x, e.y, 'S');
   }
   if (e.formation) { e.formation.killed++; checkFormation(e.formation, e.x, e.y); }
 }
 
 function enemyInterval(base) { return base * diff().fireInterval / waveFireMul(); }
-function enemySpeed(base) { return base * diff().bulletSpeed * waveBulletMul(); }
+function enemySpeed(base) { return base * ENEMY_BULLET_SCALE * diff().bulletSpeed * waveBulletMul(); }
 function canFire(e, maxY = H * 0.7) {
   return e.t > 0.5 && e.y > 14 && e.y < maxY && e.x > 6 && e.x < W - 6 && player.alive && !(boss && boss.phase === 'dying');
 }
@@ -2027,24 +2258,84 @@ function eraseBullets(points) {
 }
 
 // ---- Pods ------------------------------------------------------------------------------------
+// A cycling token shows every one of its types POD_LAPS times, then goes.
+// Tokens that don't cycle live as long as a weapon capsule would.
+const POD_TYPES = kind => kind === 'W' ? WEAPONS.length : kind === 'G' ? WING_TYPES.length : 0;
+const POD_LETTERS = kind => POD_LAPS * POD_TYPES(kind);
+const POD_LIFE = () => POD_LAPS * WEAPONS.length * POD_CYCLE;
+
 function dropPod(x, y, kind) {
-  if (pods.length > 12) return;
-  if (!kind) kind = chance(0.5) ? 'P' : 'W';
+  if (pods.length >= 16) pods.shift();   // make room rather than lose a drop
+  if (!kind) { const r = Math.random(); kind = r < 0.4 ? 'P' : r < 0.8 ? 'W' : 'G'; }
   const a = rand(35, 145) * DEG;
   pods.push({
-    kind, weapon: randi(0, 4), x: clamp(x, 16, W - 16), y: clamp(y, 16, H - 16),
-    vx: Math.cos(a) * POD_SPEED, vy: Math.sin(a) * POD_SPEED, bounces: 0, cycle: POD_CYCLE, t: 0, r: 12, dead: false,
+    kind, weapon: randi(0, WEAPONS.length - 1), wing: randi(0, WING_TYPES.length - 1),
+    x: clamp(x, 16, W - 16), y: clamp(y, 16, H - 16),
+    vx: Math.cos(a) * POD_SPEED, vy: Math.sin(a) * POD_SPEED,
+    cycle: POD_CYCLE, shown: 1, life: POD_LIFE(), t: 0, r: 12, dead: false,
   });
+}
+
+function popPod(pd) {
+  pd.dead = true;
+  part({ k: 'ring', x: pd.x, y: pd.y, r: 6, grow: 70, life: 0.25, max: 0.25, c: '255,255,255', w: 2 });
+  sparks(pd.x, pd.y, 8, '255,240,200', 90);
+  Sound.play('podPop');
+}
+
+// Seconds until a pod disappears.
+function podRemaining(pd) {
+  return POD_TYPES(pd.kind) ? (POD_LETTERS(pd.kind) - pd.shown) * POD_CYCLE + pd.cycle : pd.life;
 }
 
 function collectPod(pd) {
   const p = player;
   addScore(250);
-  if (pd.kind === 'P' || pd.weapon === p.weapon) {
-    if (p.level < 5) {
+  if (pd.kind === 'B') {
+    if (p.bombs < MAX_BOMBS) {
+      p.bombs++;
+      Sound.play('powerup');
+      floatText(p.x, p.y - 34, '+1 BOMB', C.brass, 1.6);
+    } else {
+      addScore(2000);
+      Sound.play('maxBonus');
+      floatText(p.x, p.y - 34, '+2,000', C.brass, 1.8);
+    }
+  } else if (pd.kind === 'S') {
+    if (p.ships < MAX_SHIPS) {
+      p.ships++;
+      Sound.play('powerup');
+      floatText(p.x, p.y - 34, 'EXTRA SHIP', '#8effb0', 1.8);
+    } else {
+      addScore(3000);
+      Sound.play('maxBonus');
+      floatText(p.x, p.y - 34, '+3,000', C.brass, 1.8);
+    }
+  } else if (pd.kind === 'G') {
+    if (p.wingLevel === 0) {
+      p.wingLevel = 1; p.wingType = pd.wing;
+      Sound.play('powerup');
+      floatText(p.x, p.y - 34, 'WINGMEN', WING_TYPES[pd.wing].glow, 1.7);
+    } else if (pd.wing === p.wingType) {
+      if (p.wingLevel < WING_MAX) {
+        p.wingLevel++;
+        Sound.play('powerup');
+        floatText(p.x, p.y - 34, 'WINGMEN ' + p.wingLevel, WING_TYPES[pd.wing].glow, 1.7);
+      } else {
+        addScore(3000);
+        Sound.play('maxBonus');
+        floatText(p.x, p.y - 34, '+3,000', C.brass, 1.8);
+      }
+    } else {
+      p.wingType = pd.wing;
+      Sound.play('weapon');
+      floatText(p.x, p.y - 34, WING_TYPES[pd.wing].name, WING_TYPES[pd.wing].glow, 1.6);
+    }
+  } else if (pd.kind === 'P' || pd.weapon === p.weapon) {
+    if (p.level < MAX_LEVEL) {
       p.level++;
       Sound.play('powerup');
-      floatText(p.x, p.y - 34, p.level === 5 ? 'FULL POWER' : 'POWER UP', C.brass, 1.6);
+      floatText(p.x, p.y - 34, p.level === MAX_LEVEL ? 'FULL POWER' : 'POWER UP', C.brass, 1.6);
     } else {
       addScore(5000);
       Sound.play('maxBonus');
@@ -2055,31 +2346,30 @@ function collectPod(pd) {
     Sound.play('weapon');
     floatText(p.x, p.y - 34, WEAPONS[pd.weapon].name, WEAPONS[pd.weapon].glow, 1.6);
   }
-  part({ k: 'ring', x: pd.x, y: pd.y, r: 8, grow: 120, life: 0.3, max: 0.3, c: pd.kind === 'P' ? '255,210,110' : '220,240,255', w: 2 });
+  part({ k: 'ring', x: pd.x, y: pd.y, r: 8, grow: 120, life: 0.3, max: 0.3, c: pd.kind === 'W' ? '220,240,255' : '255,210,110', w: 2 });
 }
 
 function updatePods(dt) {
   for (const pd of pods) {
     pd.t += dt;
     pd.x += pd.vx * dt; pd.y += pd.vy * dt;
-    let bounced = false;
-    if (pd.x < pd.r) { pd.x = pd.r; pd.vx = Math.abs(pd.vx); bounced = true; }
-    else if (pd.x > W - pd.r) { pd.x = W - pd.r; pd.vx = -Math.abs(pd.vx); bounced = true; }
-    if (pd.y < pd.r) { pd.y = pd.r; pd.vy = Math.abs(pd.vy); bounced = true; }
-    else if (pd.y > H - pd.r) { pd.y = H - pd.r; pd.vy = -Math.abs(pd.vy); bounced = true; }
-    if (bounced) {
-      pd.bounces++;
-      if (pd.bounces > POD_BOUNCES) {
-        pd.dead = true;
-        part({ k: 'ring', x: pd.x, y: pd.y, r: 6, grow: 70, life: 0.25, max: 0.25, c: '255,255,255', w: 2 });
-        sparks(pd.x, pd.y, 8, '255,240,200', 90);
-        Sound.play('podPop');
-        continue;
-      }
-    }
-    if (pd.kind === 'W') {
+    if (pd.x < pd.r) { pd.x = pd.r; pd.vx = Math.abs(pd.vx); }
+    else if (pd.x > W - pd.r) { pd.x = W - pd.r; pd.vx = -Math.abs(pd.vx); }
+    if (pd.y < pd.r) { pd.y = pd.r; pd.vy = Math.abs(pd.vy); }
+    else if (pd.y > H - pd.r) { pd.y = H - pd.r; pd.vy = -Math.abs(pd.vy); }
+    if (POD_TYPES(pd.kind)) {
+      // Cycle through every type; once each has shown POD_LAPS times, the token is gone.
       pd.cycle -= dt;
-      if (pd.cycle <= 0) { pd.cycle += POD_CYCLE; pd.weapon = (pd.weapon + 1) % WEAPONS.length; sparks(pd.x, pd.y, 6, '230,240,255', 70); }
+      if (pd.cycle <= 0) {
+        if (pd.shown >= POD_LETTERS(pd.kind)) { popPod(pd); continue; }
+        pd.cycle += POD_CYCLE; pd.shown++;
+        if (pd.kind === 'W') pd.weapon = (pd.weapon + 1) % WEAPONS.length;
+        else pd.wing = (pd.wing + 1) % WING_TYPES.length;
+        sparks(pd.x, pd.y, 6, '230,240,255', 70);
+      }
+    } else {
+      pd.life -= dt;
+      if (pd.life <= 0) { popPod(pd); continue; }
     }
     if (player.alive && dist2(pd.x, pd.y, player.x, player.y) < (pd.r + 16) * (pd.r + 16)) {
       pd.dead = true;
@@ -2091,8 +2381,7 @@ function updatePods(dt) {
 
 function drawPods() {
   for (const pd of pods) {
-    const last = pd.bounces >= POD_BOUNCES;
-    if (last && Math.floor(pd.t * 12) % 2 === 0) continue;
+    if (podRemaining(pd) < 3 && Math.floor(pd.t * 12) % 2 === 0) continue;
     const bob = Math.sin(pd.t * 5) * 1.2;
     if (pd.kind === 'P') {
       ctx.globalCompositeOperation = 'lighter';
@@ -2103,6 +2392,52 @@ function drawPods() {
       ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(pd.x, pd.y + bob, 11, 0, TAU); ctx.fill();
       ctx.strokeStyle = '#fff1bf'; ctx.lineWidth = 1.2; ctx.stroke();
       drawText('P', pd.x + 0.5, pd.y + bob - 7, 2, '#5a3a06', 'center');
+    } else if (pd.kind === 'B') {
+      // a spare bomb: dark casing, brass band, lit fuse
+      ctx.globalCompositeOperation = 'lighter';
+      blit(SPR.gOrange, pd.x, pd.y, 0.7 + Math.sin(pd.t * 7) * 0.08);
+      ctx.globalCompositeOperation = 'source-over';
+      const gr = ctx.createRadialGradient(pd.x - 4, pd.y - 5 + bob, 1, pd.x, pd.y + bob, 12);
+      gr.addColorStop(0, '#6d737f'); gr.addColorStop(0.55, '#333a45'); gr.addColorStop(1, '#14181f');
+      ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(pd.x, pd.y + bob, 11, 0, TAU); ctx.fill();
+      ctx.strokeStyle = '#e8b64c'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(pd.x, pd.y + bob, 11, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = 'rgba(232,182,76,0.9)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(pd.x, pd.y + bob - 11); ctx.lineTo(pd.x + 3, pd.y + bob - 16); ctx.stroke();
+      ctx.fillStyle = '#ffd88a';
+      ctx.beginPath(); ctx.arc(pd.x + 3.5, pd.y + bob - 17, 2 + Math.sin(pd.t * 22) * 0.6, 0, TAU); ctx.fill();
+      drawText('B', pd.x + 0.5, pd.y + bob - 6, 1.7, '#ffe3a8', 'center');
+    } else if (pd.kind === 'S') {
+      // a spare ship
+      ctx.globalCompositeOperation = 'lighter';
+      blit(SPR.gGreen, pd.x, pd.y, 0.8 + Math.sin(pd.t * 6) * 0.08);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = '#14251c';
+      roundRect(pd.x - 13, pd.y + bob - 12, 26, 24, 7); ctx.fill();
+      ctx.strokeStyle = '#8effb0'; ctx.lineWidth = 1.6; roundRect(pd.x - 13, pd.y + bob - 12, 26, 24, 7); ctx.stroke();
+      drawPlayerShip(player.pilot, pd.x, pd.y + bob - 4, 0, 0, 0.36);
+      drawText('1UP', pd.x + 0.5, pd.y + bob + 4, 1.1, '#8effb0', 'center');
+    } else if (pd.kind === 'G') {
+      // a wingman token: cycles through the three wing guns
+      const g = WING_TYPES[pd.wing];
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.5; blit(SPR.gWhite, pd.x, pd.y, 0.6); ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+      const gfrac = pd.cycle / POD_CYCLE;
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(pd.x, pd.y + bob, 17, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = g.glow; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(pd.x, pd.y + bob, 17, -Math.PI / 2, -Math.PI / 2 + TAU * gfrac); ctx.stroke();
+      ctx.fillStyle = '#1b2230';
+      ctx.beginPath();
+      ctx.moveTo(pd.x, pd.y + bob - 13); ctx.lineTo(pd.x + 12, pd.y + bob - 4); ctx.lineTo(pd.x + 12, pd.y + bob + 9);
+      ctx.lineTo(pd.x, pd.y + bob + 13); ctx.lineTo(pd.x - 12, pd.y + bob + 9); ctx.lineTo(pd.x - 12, pd.y + bob - 4);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = g.color; ctx.lineWidth = 1.6; ctx.stroke();
+      // two little drones either side of a dash
+      ctx.fillStyle = g.color;
+      for (const sx of [-6.5, 6.5]) { ctx.beginPath(); ctx.moveTo(pd.x + sx, pd.y + bob - 5); ctx.lineTo(pd.x + sx + 3, pd.y + bob + 1); ctx.lineTo(pd.x + sx - 3, pd.y + bob + 1); ctx.fill(); }
+      drawText(g.key, pd.x + 0.5, pd.y + bob + 3, 1.3, g.glow, 'center');
     } else {
       const w = WEAPONS[pd.weapon];
       ctx.globalCompositeOperation = 'lighter';
@@ -2455,8 +2790,10 @@ function finishBoss() {
   Game.flash = 0.8; Game.flashColor = '255,245,225';
   Game.shake = 1.2;
   floatText(b.x, b.y + 50, fmt(pts), C.brass, 3, 2.2);
-  dropPod(b.x - 20, b.y + 20, 'P');
-  dropPod(b.x + 20, b.y + 20, 'W');
+  dropPod(b.x - 26, b.y + 20, 'P');
+  dropPod(b.x + 26, b.y + 20, 'W');
+  dropPod(b.x, b.y + 34, 'B');
+  dropPod(b.x, b.y - 10, 'G');
   if (diff().id === 'cadet') dropPod(b.x, b.y + 30, 'P');
   boss = null;
   Director.afterBoss();
@@ -2464,7 +2801,7 @@ function finishBoss() {
 
 // Boss timing helpers: intervals shrink as health falls, bullets speed up on return visits.
 function bInt(b, base, rage) { return base * diff().fireInterval / (1 + 0.7 * rage) / (1 + Math.min(0.75, 0.25 * b.loop)); }
-function bSpd(b, base) { return base * diff().bulletSpeed * (1 + Math.min(0.3, 0.08 * b.loop)); }
+function bSpd(b, base) { return base * ENEMY_BULLET_SCALE * diff().bulletSpeed * (1 + Math.min(0.3, 0.08 * b.loop)); }
 
 const BOSS_PATTERNS = {
   warden: [
@@ -3102,6 +3439,7 @@ function updatePlay(dt) {
   Ground.update(dt);
   updateDirector(dt);
   updatePlayer(dt);
+  updateWings(dt);
   updateShots(dt);
   updateEnemies(dt);
   updateBoss(dt);
@@ -3132,6 +3470,7 @@ function drawPlayWorld() {
   drawEnemies(false);
   drawBoss();
   drawShots();
+  drawWings();
   drawPlayer();
   drawPods();
   drawParticles(true);
@@ -3217,9 +3556,11 @@ function processTaps() {
   }
 }
 
+const BOMB_BTN = { x: 48, y: H - 60, r: 32 };   // bottom left
+
 function hudButtonAt(x, y) {
   if (dist2(x, y, W - 26, 28) < 30 * 30) { openManual('pause'); return true; }
-  if (Pointer.touchMode && dist2(x, y, W - 52, H - 66) < 40 * 40) { useBomb(); return true; }
+  if (dist2(x, y, BOMB_BTN.x, BOMB_BTN.y) < (BOMB_BTN.r + 8) * (BOMB_BTN.r + 8)) { useBomb(); return true; }
   return false;
 }
 
@@ -3284,7 +3625,7 @@ function manualActivate(id) {
   else if (id === 'music') toggleMusic();
   else if (id === 'abandon') { Sound.play('menuBack'); endRun(); Music.play('menu'); }
 }
-function turnPage(d) { UI.page = (UI.page + d + 4) % 4; Sound.play('page'); }
+function turnPage(d) { UI.page = (UI.page + d + MANUAL_PAGES.length) % MANUAL_PAGES.length; Sound.play('page'); }
 
 function handleMenuInput() {
   // Global toggles
@@ -3526,37 +3867,48 @@ function drawHUD() {
     ctx.globalAlpha = 1;
   }
 
-  // ships in reserve and bombs
+  // ships in reserve, bottom right
   const reserve = Math.max(0, p.ships - (p.alive ? 1 : 0));
-  for (let i = 0; i < Math.min(reserve, 6); i++) drawPlayerShip(p.pilot, 22 + i * 20, H - 40, 0, 0, 0.42, 0.9);
-  if (reserve > 6) drawText('+' + (reserve - 6), 22 + 6 * 20, H - 45, 1.2, C.ink);
-  for (let i = 0; i < p.bombs; i++) {
-    const bx = 18 + i * 16, by = H - 16;
-    ctx.fillStyle = '#e8b64c'; ctx.beginPath(); ctx.arc(bx, by, 5.5, 0, TAU); ctx.fill();
-    ctx.fillStyle = '#5a3a06'; ctx.fillRect(bx - 1, by - 3, 2, 6); ctx.fillRect(bx - 3, by - 1, 6, 2);
-  }
+  for (let i = 0; i < Math.min(reserve, 6); i++) drawPlayerShip(p.pilot, W - 22 - i * 20, H - 34, 0, 0, 0.42, 0.9);
+  if (reserve > 6) drawText('+' + (reserve - 6), W - 22 - 6 * 20, H - 39, 1.2, C.ink, 'right');
 
-  // weapon badge
+  // weapon badge and wingman badge
   const w = WEAPONS[p.weapon];
   const cx = W / 2;
-  ctx.fillStyle = w.color; roundRect(cx - 62, H - 40, 16, 22, 7); ctx.fill();
-  drawText(w.key, cx - 54 + 0.5, H - 35, 1.6, '#0b0f1a', 'center');
-  drawText(w.name, cx - 38, H - 40, 1.5, C.ink);
-  for (let i = 0; i < 5; i++) {
+  ctx.fillStyle = w.color; roundRect(cx - 100, H - 40, 15, 22, 7); ctx.fill();
+  drawText(w.key, cx - 92.5, H - 35, 1.6, '#0b0f1a', 'center');
+  drawText(w.name, cx - 80, H - 40, 1.4, C.ink);
+  for (let i = 0; i < MAX_LEVEL; i++) {
     ctx.fillStyle = i < p.level ? w.glow : 'rgba(242,234,216,0.15)';
-    ctx.fillRect(cx - 38 + i * 13, H - 25, 10, 5);
+    ctx.fillRect(cx - 80 + i * 6, H - 25, 4.5, 5);
   }
-  if (p.level === 5) drawText('MAX', cx - 38 + 68, H - 26, 1, C.brass);
-  if (Game.autoFire) drawText('AUTO', cx + 50, H - 40, 1.1, C.signal);
+  if (p.level === MAX_LEVEL) drawText('MAX', cx - 14, H - 26, 1, C.brass);
+  if (p.wingLevel > 0) {
+    const g = WING_TYPES[p.wingType];
+    ctx.fillStyle = g.color;
+    for (const sx of [cx + 20, cx + 30]) { ctx.beginPath(); ctx.moveTo(sx, H - 40); ctx.lineTo(sx + 4, H - 31); ctx.lineTo(sx - 4, H - 31); ctx.fill(); }
+    drawText(g.name, cx + 40, H - 40, 1.3, C.ink);
+    for (let i = 0; i < WING_MAX; i++) {
+      ctx.fillStyle = i < p.wingLevel ? g.glow : 'rgba(242,234,216,0.15)';
+      ctx.fillRect(cx + 40 + i * 11, H - 25, 8, 5);
+    }
+  }
+  if (Game.autoFire) drawText('AUTO', W - 26, 50, 1.1, C.signal, 'center');
 
-  // touch bomb button
-  if (Pointer.touchMode) {
-    const bx = W - 52, by = H - 66, ready = p.bombs > 0 && Game.bombT <= 0 && p.alive;
+  // bomb button, bottom left: tap or click it, or press X / K
+  {
+    const { x: bx, y: by, r } = BOMB_BTN, ready = p.bombs > 0 && Game.bombT <= 0 && p.alive;
     ctx.fillStyle = ready ? 'rgba(232,182,76,0.22)' : 'rgba(8,12,22,0.45)';
-    ctx.beginPath(); ctx.arc(bx, by, 32, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(bx, by, r, 0, TAU); ctx.fill();
     ctx.strokeStyle = ready ? C.brass : 'rgba(242,234,216,0.25)'; ctx.lineWidth = 2; ctx.stroke();
-    drawText('BOMB', bx, by - 9, 1.5, ready ? C.brass : 'rgba(242,234,216,0.4)', 'center');
-    drawText(String(p.bombs), bx, by + 4, 1.6, ready ? C.ink : 'rgba(242,234,216,0.4)', 'center');
+    drawText('BOMB', bx, by - 12, 1.5, ready ? C.brass : 'rgba(242,234,216,0.4)', 'center');
+    // one pip per bomb in hand
+    const n = p.bombs, gap = 9, x0 = bx - (Math.min(n, 5) - 1) * gap / 2;
+    for (let i = 0; i < Math.min(n, 5); i++) {
+      ctx.fillStyle = ready ? C.brass : 'rgba(242,234,216,0.4)';
+      ctx.beginPath(); ctx.arc(x0 + i * gap, by + 7, 3, 0, TAU); ctx.fill();
+    }
+    if (n > 5) drawText('+' + (n - 5), bx, by + 13, 1, C.ink, 'center');
   }
 
   // banner
@@ -3592,7 +3944,7 @@ function drawHUD() {
 }
 
 // ---- Flight manual ----------------------------------------------------------------------------------------
-const MANUAL_PAGES = ['CONTROLS', 'WEAPONS', 'PILOTS', 'FIELD NOTES'];
+const MANUAL_PAGES = ['CONTROLS', 'WEAPONS', 'PODS', 'PILOTS', 'NOTES'];
 const PX = 24, PY = 30, PW = W - 48, PH = H - 60;
 const INK = C.paperInk, INK2 = 'rgba(29,35,48,0.62)';
 
@@ -3608,7 +3960,7 @@ function drawManual() {
 
   // header
   drawText('IRON MERIDIAN · FLIGHT MANUAL', PX + 22, PY + 22, 1.1, INK2);
-  const pg = (UI.page + 1) + ' / 4';
+  const pg = (UI.page + 1) + ' / ' + MANUAL_PAGES.length;
   drawText(pg, PX + PW - 48, PY + 22, 1.2, INK, 'right');
   drawText('<', PX + PW - 88, PY + 22, 1.2, INK, 'right');
   drawText('>', PX + PW - 24, PY + 22, 1.2, INK, 'right');
@@ -3629,12 +3981,12 @@ function drawManual() {
     UI.button(tx - 6, PY + 80, tw + 12, 26, () => { if (UI.page !== i) { UI.page = i; Sound.play('page'); } });
     drawText(name, tx, PY + 88, 1.2, i === UI.page ? INK : INK2);
     if (i === UI.page) { ctx.fillStyle = C.stamp; ctx.fillRect(tx, PY + 100, tw, 2); }
-    tx += tw + 22;
+    tx += tw + 17;
   });
   ctx.fillStyle = C.paperRule; ctx.fillRect(PX + 22, PY + 110, PW - 44, 1);
 
   const cx = PX + 22, cy = PY + 124, cw = PW - 44;
-  [manualControls, manualWeapons, manualPilots, manualNotes][UI.page](cx, cy, cw);
+  [manualControls, manualWeapons, manualPods, manualPilots, manualNotes][UI.page](cx, cy, cw);
 
   // controls
   ctx.fillStyle = C.paperRule; ctx.fillRect(PX + 22, PY + PH - 124, PW - 44, 1);
@@ -3667,7 +4019,7 @@ function manualControls(x, y, w) {
     ['Move', 'Arrow keys or WASD', 'Drag anywhere on screen'],
     ['Fire', 'Z, J or Space, held', 'Fires automatically on touch'],
     ['Auto-fire', 'F toggles it', 'Toggle below'],
-    ['Bomb', 'X or K', 'The round BOMB button, bottom right'],
+    ['Bomb', 'X or K', 'The round BOMB button, bottom left'],
     ['Precision', 'Hold Shift or C for half speed', '—'],
     ['Pause', 'Esc or P opens this manual', 'The pause button, top right'],
     ['Abandon', 'Q, while paused', 'ABANDON below'],
@@ -3691,32 +4043,76 @@ function manualControls(x, y, w) {
 
 function manualWeapons(x, y, w) {
   const desc = [
-    'Spread cannon. One stream widening to five across the lane.',
-    'Piercing beams that drill through a whole column of hulls. One beam, up to five.',
-    'Slow orbs that detonate and splash everything nearby. One small orb up to three; the splash grows.',
-    'Seeking warheads plus a light nose gun. Two warheads per volley up to six; twin nose gun from level 3.',
-    'Chain lightning with screen-wide reach. Never misses, but strikes two targets per pulse up to six, weaker with each jump. Splits into two chains from level 3. Weakest against a lone boss.',
+    'Spread cannon. One stream widening to seven across the lane.',
+    'Piercing beams that drill through a whole column of hulls. One beam, up to seven.',
+    'Slow orbs that detonate and splash everything nearby. One small orb up to five, and the splash keeps growing.',
+    'Seeking warheads plus a light nose gun. Two warheads per volley up to eight; twin nose gun from level 3, triple from level 8.',
+    'Chain lightning with screen-wide reach. Never misses, but strikes two targets per pulse up to eight, weaker with each jump. Two chains from level 3, three from level 8. Weakest against a lone boss.',
+    'Shells that burst into shrapnel a short way ahead of you. One shell up to three, six splinters up to sixteen. Murder on formations, poor against a single hull.',
+    'Sawblades that ricochet off the walls and cut anything they touch, again and again. One blade up to four, three bounces up to eight.',
   ];
   let yy = y;
   WEAPONS.forEach((wp, i) => {
-    ctx.fillStyle = wp.color; roundRect(x, yy + 1, 16, 22, 7); ctx.fill();
-    ctx.strokeStyle = 'rgba(29,35,48,0.5)'; ctx.lineWidth = 1; roundRect(x, yy + 1, 16, 22, 7); ctx.stroke();
-    drawText(wp.key, x + 8.5, yy + 6, 1.5, '#0b0f1a', 'center');
-    drawText(wp.name, x + 28, yy + 2, 1.6, INK);
-    const h = serif(desc[i], x + 28, yy + 16, 11.5, INK, { width: w - 28, lh: 14 });
-    yy += Math.max(28, h + 22);
+    ctx.fillStyle = wp.color; roundRect(x, yy + 1, 15, 21, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(29,35,48,0.5)'; ctx.lineWidth = 1; roundRect(x, yy + 1, 15, 21, 7); ctx.stroke();
+    drawText(wp.key, x + 8, yy + 6, 1.4, '#0b0f1a', 'center');
+    drawText(wp.name, x + 26, yy + 2, 1.5, INK);
+    const h = serif(desc[i], x + 26, yy + 15, 11, INK, { width: w - 26, lh: 13 });
+    yy += Math.max(26, h + 20);
+  });
+  ctx.fillStyle = C.paperRule; ctx.fillRect(x, yy + 2, w, 1);
+  serif('Every weapon runs from level 1 to level 10. Past level five each pod adds damage rather than another barrel. Losing a ship costs two levels.', x, yy + 10, 11.5, INK, { width: w, lh: 14, italic: true });
+}
+
+function manualPods(x, y, w) {
+  const rows = [
+    ['gold', 'Gold round P raises the level of the weapon you are flying, up to ten.'],
+    ['capsule', 'A coloured capsule switches to that weapon and keeps the level you already have. The letter you are flying raises the level instead.'],
+    ['bomb', 'A dark B token is a spare bomb, up to ten in hand. Tanks, spinners, gunships and frigates carry them, and so does every boss.'],
+    ['ship', 'A green 1UP token is a spare ship, up to nine in reserve. The heavier craft carry them, rarely.'],
+    ['wing', 'A wingman token puts a drone on each side of you. The same letter again raises them a level, up to three; a different letter changes their gun.'],
+  ];
+  let yy = y;
+  for (const [icon, text] of rows) {
+    if (icon === 'gold') {
+      ctx.fillStyle = '#e8b64c'; ctx.beginPath(); ctx.arc(x + 8, yy + 8, 8, 0, TAU); ctx.fill();
+      drawText('P', x + 8.5, yy + 3.5, 1.3, '#5a3a06', 'center');
+    } else if (icon === 'capsule') {
+      ctx.fillStyle = '#46e0ff'; roundRect(x + 2, yy, 12, 17, 5); ctx.fill();
+    } else if (icon === 'bomb') {
+      ctx.fillStyle = '#333a45'; ctx.beginPath(); ctx.arc(x + 8, yy + 8, 8, 0, TAU); ctx.fill();
+      ctx.strokeStyle = '#a8801f'; ctx.lineWidth = 1.5; ctx.stroke();
+      drawText('B', x + 8.5, yy + 4, 1.2, '#ebe3cf', 'center');
+    } else if (icon === 'ship') {
+      ctx.fillStyle = '#1d3a2a'; roundRect(x, yy, 17, 17, 5); ctx.fill();
+      ctx.strokeStyle = '#3f8a5c'; ctx.lineWidth = 1.2; roundRect(x, yy, 17, 17, 5); ctx.stroke();
+      drawPlayerShip(player.pilot, x + 8.5, yy + 9, 0, 0, 0.3);
+    } else {
+      ctx.fillStyle = '#1b2230';
+      ctx.beginPath();
+      ctx.moveTo(x + 8, yy - 1); ctx.lineTo(x + 17, yy + 5); ctx.lineTo(x + 17, yy + 13); ctx.lineTo(x + 8, yy + 18);
+      ctx.lineTo(x - 1, yy + 13); ctx.lineTo(x - 1, yy + 5); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#ffe066';
+      for (const sx of [3.5, 12.5]) { ctx.beginPath(); ctx.moveTo(x + sx, yy + 4); ctx.lineTo(x + sx + 2.5, yy + 10); ctx.lineTo(x + sx - 2.5, yy + 10); ctx.fill(); }
+    }
+    yy += Math.max(22, serif(text, x + 28, yy + 1, 11, INK, { width: w - 28, lh: 13 }) + 8);
+  }
+  ctx.fillStyle = C.paperRule; ctx.fillRect(x, yy, w, 1);
+  yy += 9;
+  drawText('WINGMEN', x, yy, 1.4, C.stamp);
+  serif('僚机', x + textWidth('WINGMEN', 1.4) + 10, yy - 2, 13, C.stamp);
+  yy += 15;
+  WING_TYPES.forEach(g => {
+    ctx.fillStyle = g.color;
+    ctx.beginPath(); ctx.moveTo(x + 6, yy); ctx.lineTo(x + 11, yy + 10); ctx.lineTo(x + 1, yy + 10); ctx.fill();
+    drawText(g.key + '  ' + g.name, x + 20, yy + 1, 1.2, INK);
+    serif(g.kind, x + 104, yy, 11, INK, { lh: 13 });
+    yy += 16;
   });
   yy += 2;
+  yy += serif('Level 2 lifts their rate of fire; level 3 puts a second drone on each side. Losing a ship costs one wingman level. Wingmen fire whenever you do and cannot be hit.', x, yy, 11, INK, { width: w, lh: 13 }) + 8;
   ctx.fillStyle = C.paperRule; ctx.fillRect(x, yy, w, 1);
-  yy += 10;
-  drawText('PODS', x, yy, 1.5, C.stamp);
-  yy += 16;
-  ctx.fillStyle = '#e8b64c'; ctx.beginPath(); ctx.arc(x + 8, yy + 8, 8, 0, TAU); ctx.fill();
-  drawText('P', x + 8.5, yy + 3.5, 1.3, '#5a3a06', 'center');
-  yy += serif('Gold round P raises your current weapon’s level.', x + 28, yy + 1, 11.5, INK, { width: w - 28, lh: 14 }) + 6;
-  ctx.fillStyle = '#46e0ff'; roundRect(x + 2, yy, 12, 17, 5); ctx.fill();
-  yy += serif('A coloured capsule switches to that weapon and keeps your level. The letter you already have raises the level instead.', x + 28, yy + 1, 11.5, INK, { width: w - 28, lh: 14 }) + 6;
-  serif('Pods bounce off the edges three times, blink, and pop on the fourth. Capsules cycle V → L → P → M → S every ten seconds; the ring shows how long is left.', x, yy, 11.5, INK2, { width: w, lh: 14, italic: true });
+  serif('Pods bounce off the edges. Every cycling token changes type every five seconds and disappears once it has shown all of them: 35 seconds for a weapon capsule, 15 for a wingman token. A gold P, bomb or ship token lasts 35 seconds. All of them blink for their last three seconds.', x, yy + 9, 11, INK2, { width: w, lh: 13, italic: true });
 }
 
 function manualPilots(x, y, w) {
@@ -3738,10 +4134,10 @@ function manualPilots(x, y, w) {
 function manualNotes(x, y, w) {
   const notes = [
     ['BOMBS', 'A bomb erases every enemy bullet on screen (10 points each), damages everything for about a second and a half, and makes you untouchable for nearly three seconds.'],
-    ['LOSING A SHIP', 'Costs two weapon levels; the lost power drops as a gold P where you went down. The next ship flies in with three seconds of invulnerability and bombs refilled.'],
+    ['LOSING A SHIP', 'Costs two weapon levels and one wingman level; the lost power drops as a gold P where you went down. The next ship flies in with three seconds of invulnerability and bombs refilled.'],
     ['CHAIN', 'Each kill within 1.6 seconds of the last extends your chain. Every five kills adds ×1 to the multiplier, up to ×8. Losing a ship resets it.'],
     ['FORMATIONS', 'Destroy every ship in a formation of four or more, with none escaping, for 200 points per ship times your multiplier.'],
-    ['PICKUPS', 'Any pod is worth 250 points. A power-up at full power is worth 5,000 more. Every wave sends at least one pod carrier.'],
+    ['PICKUPS', 'Any pod is worth 250 points. A power-up at full power is worth 5,000 more; a bomb, ship or wingman token you cannot use is worth 2,000 to 3,000. Every wave sends at least one pod carrier.'],
     ['BOSSES', 'Every fifth wave: Warden, Hydra, Seraph, Leviathan, then round again, tougher. Worth 20,000 times the bosses you have met.'],
   ];
   let yy = y;
