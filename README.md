@@ -79,7 +79,7 @@ Bomb and ship tokens drop on their own rolls, so a frigate can leave a weapon po
 | Gunship | 30% | 3% |
 | Frigate | 55% | 7% |
 
-Those chances are scaled by the difficulty's pod drop rate, so Cadet sees more and Meridian fewer.
+Those chances are the same on every level.
 
 ---
 
@@ -103,7 +103,7 @@ Three guns, and the token cycles through them every five seconds, exactly like a
 | **X** | Spray | An angled fan either side, for sweeping a lane |
 | **H** | Homer | Slow seekers that pick their own targets |
 
-Picking up the letter your wingmen already carry raises their level; a different letter changes their gun and keeps the level. Losing a ship costs one wingman level.
+Picking up the letter your wingmen already carry raises their level. **A different letter only changes their gun: the level you have reached is kept**, so trying another gun never costs you anything. Losing a ship costs one wingman level.
 
 ---
 
@@ -119,7 +119,7 @@ Five, with real trade-offs rather than palette swaps.
 | **Havoc** | 65% more damage at half the fire rate | 292 | ±0 | 3 | Large |
 | **Nyx** | Enormous fire rate (×2.5), feather-light shots (×0.36), two extra bombs | 300 | ±0 | 5 | Standard |
 
-Speed is in pixels per second on the 480×720 playfield. Ships are added to or taken from the difficulty's starting count, and you always get at least one. Aegis carries momentum through every turn, so it drifts before it changes direction.
+Speed is in pixels per second on the 480×720 playfield. Ships are added to or taken from each level's starting count of three, and you always get at least one. Aegis carries momentum through every turn, so it drifts before it changes direction.
 
 ---
 
@@ -131,17 +131,19 @@ Losing a ship costs two weapon levels and one wingman level, and the lost power 
 
 ---
 
-## Difficulty
+## Levels
 
-| | Cadet | Regular | Meridian |
+Five difficulty levels. **Level 3 is the base the game is tuned around.** Each step up multiplies the health of every enemy and boss by 1.1 and the speed of every enemy bullet by 1.02; each step down divides by the same.
+
+| | Level | Enemy and boss health | Enemy bullet speed |
 |---|---|---|---|
-| Starting ships | 5 | 3 | 2 |
-| Enemy bullet speed | ×0.72 | ×1 | ×1.28 |
-| Time between enemy shots | ×1.5 | ×1 | ×0.68 |
-| Enemy hull strength | ×0.72 | ×1 | ×1.35 |
-| Formation size | ×0.75 | ×1 | ×1.32 |
-| Pod drop rate | ×1.45 | ×1 | ×0.72 |
-| Boss health | ×0.68 | ×1 | ×1.45 |
+| **I** | Cadet | ×0.83 | ×0.96 |
+| **II** | Airman | ×0.91 | ×0.98 |
+| **III** | Regular | ×1.00 (base) | ×1.00 (base) |
+| **IV** | Veteran | ×1.10 | ×1.02 |
+| **V** | Meridian | ×1.21 | ×1.04 |
+
+Nothing else changes between levels: every level starts you with three ships, and enemy fire rate, formation size and pod drop rate are the same throughout. Regular is selected by default.
 
 ---
 
@@ -252,7 +254,8 @@ The balance lives in plain constants near the top of `index.html`:
 | `WING_MAX` | Wingman levels (currently `3`) |
 | `LV` | The per-level tables: streams, beams, orbs, warheads, strikes, shells, splinters, blades and bounces |
 | `WING_TYPES`, `WING_RATE`, `WING_DMG` | The three wingman guns, and what each level adds |
-| `DIFFS` | The three difficulty settings in the table above |
+| `DIFFS` | The five levels in the table above, built from the two step constants |
+| `DIFF_HP_STEP`, `DIFF_BULLET_STEP` | How much each level step multiplies health and bullet speed (currently `1.1` and `1.02`) |
 | `PILOTS` | Speed, handling, core size, ships, bombs, damage and fire rate per pilot |
 | `ETYPES` | Base health, size, score, pod chance, bomb-token chance and spare-ship chance for each enemy |
 | `BOSSES` | Base health, hitboxes and pattern names for each boss |
