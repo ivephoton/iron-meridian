@@ -31,9 +31,19 @@ const ENEMY_HP_SCALE = 0.385;
 const ENEMY_BULLET_SCALE = 0.805;
 // Bombs every pilot starts with, before pilot bonuses.
 const BASE_BOMBS = 3;
-// Power levels per weapon, and levels of wingmen.
+// Power levels per weapon, and levels of wingmen. Endless mode raises both.
 const MAX_LEVEL = 10;
 const WING_MAX = 3;
+const MAX_LEVEL_ENDLESS = 15;
+const WING_MAX_ENDLESS = 15;
+const WING_PER_TYPE = 5;          // endless: drones you may hold of each kind
+
+// Endless mode: every wave stiffens the opposition, and from wave 20 your own
+// ship and wingmen start growing too.
+const ENDLESS_HP_STEP = 1.02;
+const ENDLESS_BULLET_STEP = 1.01;
+const ENDLESS_HERO_STEP = 1.02;
+const ENDLESS_HERO_FROM = 20;
 // Seconds you have between kills to keep a chain alive.
 const CHAIN_WINDOW = 1.6;
 
@@ -1240,8 +1250,9 @@ const Ground = {
 const Game = {
   state: 'title',          // title | difficulty | pilot | play | gameover | manual
   paused: false,
+  mode: 'campaign',        // campaign | endless
   diff: 2, pilotIdx: 0,   // level 3 of five
-  score: 0, best: 0, newBest: false,
+  score: 0, bests: { campaign: 0, endless: 0 }, newBest: false,
   wave: 0, time: 0,
   chain: 0, mult: 1, lastKill: -99,
   bossesMet: 0,
@@ -1258,10 +1269,18 @@ let boss = null;
 
 const diff = () => DIFFS[Game.diff];
 const wIdx = () => Math.max(0, Game.wave - 1);
-const waveHpMul = () => 1 + 0.085 * wIdx();
+const endless = () => Game.mode === 'endless';
+const bestScore = () => Game.bests[Game.mode] || 0;
+// Endless: +2% enemy health and +1% enemy bullet speed every wave, for ever.
+// Campaign: the original curves, which level off around wave 20.
+const waveHpMul = () => endless() ? Math.pow(ENDLESS_HP_STEP, wIdx()) : 1 + 0.085 * wIdx();
+const waveBulletMul = () => endless() ? Math.pow(ENDLESS_BULLET_STEP, wIdx()) : 1 + Math.min(0.35, wIdx() * 0.02);
 const waveFireMul = () => 1 + Math.min(1, wIdx() * 0.055);       // up to twice as often
-const waveBulletMul = () => 1 + Math.min(0.35, wIdx() * 0.02);   // up to 35% faster
 const waveFormMul = () => 1 + Math.min(0.5, wIdx() * 0.028);     // up to 50% larger
+// Endless: from wave 20 your damage, bullet speed and handling grow 2% a wave.
+const heroGrow = () => endless() && Game.wave > ENDLESS_HERO_FROM ? Math.pow(ENDLESS_HERO_STEP, Game.wave - ENDLESS_HERO_FROM) : 1;
+const maxLevel = () => endless() ? MAX_LEVEL_ENDLESS : MAX_LEVEL;
+const wingMax = () => endless() ? WING_MAX_ENDLESS : WING_MAX;
 const startBombs = () => BASE_BOMBS + player.pilot.bombs;
 
 function addScore(n) { Game.score += n; }
@@ -1364,7 +1383,7 @@ function resetPlayer() {
   Object.assign(player, {
     pilot: pl, x: W / 2, y: H + 40, vx: 0, vy: 0, bank: 0, t: 0,
     weapon: 0, level: 1,
-    wingLevel: 0, wingType: 0, wings: [],
+    wingLevel: 0, wingType: 0, wings: [], wingCounts: [0, 0, 0],
     ships: Math.max(1, d.ships + pl.ships), bombs: BASE_BOMBS + pl.bombs,
     alive: true, invuln: 2.5, respawnT: 0, enterT: 0.9,
     fireT: 0, fireT2: 0, slow: false, coreGlow: 0,
@@ -1424,7 +1443,7 @@ function updatePlayer(dt) {
     if (Input.held('down')) iy += 1;
     if (ix && iy) { ix *= Math.SQRT1_2; iy *= Math.SQRT1_2; }
     p.slow = Input.held('slow');
-    const spd = pl.speed * (p.slow ? 0.5 : 1);
+    const spd = pl.speed * heroGrow() * (p.slow ? 0.5 : 1);
     let tvx = ix * spd, tvy = iy * spd;
     let dragX = 0, dragY = 0;
     if (Pointer.dx || Pointer.dy) {
@@ -1479,6 +1498,7 @@ const fan = (i, n) => n <= 1 ? 0 : (i / (n - 1)) * 2 - 1;
 
 function mkShot(kind, x, y, deg, speed, dmg, extra) {
   const a = deg * DEG;
+  speed *= heroGrow();
   const s = { kind, x, y, vx: Math.sin(a) * speed, vy: -Math.cos(a) * speed, dmg, r: 4, life: 2.5, dead: false, ang: a };
   if (extra) Object.assign(s, extra);
   shots.push(s);
@@ -1493,13 +1513,16 @@ function targetable() {
   return out;
 }
 
+// The level tables run to ten; past that the extra levels pay in damage.
+const lvI = L => Math.min(L, 10) - 1;
+
 function fireWeapon(p) {
-  const pl = p.pilot, dm = pl.damage * overLv(p.level), fr = pl.fireRate, L = p.level;
+  const pl = p.pilot, dm = pl.damage * overLv(p.level) * heroGrow(), fr = pl.fireRate, L = lvI(p.level) + 1;
   const x = p.x, y = p.y - 14;
   let guard = 0;
   switch (p.weapon) {
     case 0: { // Vulcan
-      const n = LV.vulcanN[L - 1], sp = LV.vulcanSp[L - 1];
+      const n = LV.vulcanN[lvI(L)], sp = LV.vulcanSp[lvI(L)];
       while (p.fireT <= 0 && guard++ < 3) {
         p.fireT += 0.075 / fr;
         for (let i = 0; i < n; i++) { const f = fan(i, n); mkShot('vulcan', x + f * 11, y, f * sp, 840, 0.8 * dm, { r: 4 }); }
@@ -1508,7 +1531,7 @@ function fireWeapon(p) {
       break;
     }
     case 1: { // Lance
-      const n = LV.lanceN[L - 1];
+      const n = LV.lanceN[lvI(L)];
       while (p.fireT <= 0 && guard++ < 3) {
         p.fireT += 0.14 / fr;
         for (let i = 0; i < n; i++) mkShot('beam', x + (i - (n - 1) / 2) * 12, y - 6, 0, 1150, 1.7 * dm, { hits: [], len: 34 });
@@ -1517,7 +1540,7 @@ function fireWeapon(p) {
       break;
     }
     case 2: { // Plasma
-      const n = LV.plasmaN[L - 1], splash = LV.plasmaSpl[L - 1];
+      const n = LV.plasmaN[lvI(L)], splash = LV.plasmaSpl[lvI(L)];
       while (p.fireT <= 0 && guard++ < 3) {
         p.fireT += 0.3 / fr;
         for (let i = 0; i < n; i++) {
@@ -1537,7 +1560,7 @@ function fireWeapon(p) {
       }
       if (p.fireT2 <= 0) {
         p.fireT2 = Math.max(p.fireT2, -0.05) + 0.55 / fr;
-        launchHornets(p, LV.hornetN[L - 1], 2.4 * dm);
+        launchHornets(p, LV.hornetN[lvI(L)], 2.4 * dm);
       }
       break;
     }
@@ -1548,24 +1571,24 @@ function fireWeapon(p) {
       }
       break;
     case 5: { // Flak: shells that burst into shrapnel
-      const n = LV.flakN[L - 1];
+      const n = LV.flakN[lvI(L)];
       while (p.fireT <= 0 && guard++ < 3) {
         p.fireT += 0.42 / fr;
         for (let i = 0; i < n; i++) {
           const f = fan(i, n);
-          mkShot('shell', x + f * 12, y, f * 7, 420, 1.6 * dm, { r: 5.5, fuse: 0.42, frags: LV.flakFrag[L - 1], fdmg: 0.75 * dm, flife: 0.58 + L * 0.02, spin: rand(TAU) });
+          mkShot('shell', x + f * 12, y, f * 7, 420, 1.6 * dm, { r: 5.5, fuse: 0.42, frags: LV.flakFrag[lvI(L)], fdmg: 0.75 * dm, flife: 0.58 + L * 0.02, spin: rand(TAU) });
         }
         Sound.play('shot', 5);
       }
       break;
     }
     case 6: { // Ripper: blades that ricochet off the walls
-      const n = LV.ripperN[L - 1];
+      const n = LV.ripperN[lvI(L)];
       while (p.fireT <= 0 && guard++ < 3) {
         p.fireT += 0.26 / fr;
         for (let i = 0; i < n; i++) {
           const f = fan(i, n);
-          mkShot('blade', x + f * 10, y, f * 13, 520, 1.5 * dm, { r: 8, life: 2.4, bounces: LV.ripperB[L - 1], hits: [], spin: rand(TAU) });
+          mkShot('blade', x + f * 10, y, f * 13, 520, 1.5 * dm, { r: 8, life: 2.4, bounces: LV.ripperB[lvI(L)], hits: [], spin: rand(TAU) });
         }
         Sound.play('shot', 6);
       }
@@ -1575,57 +1598,82 @@ function fireWeapon(p) {
 }
 
 // ---- Wingmen (僚机) -------------------------------------------------------------------------
+// Levels 1-3 keep the campaign feel; endless levels past that keep paying out.
 const WING_RATE = [1, 1.55, 1.75];
 const WING_DMG = [1, 1.15, 1.3];
+const wingRate = L => L <= 0 ? 1 : L <= 3 ? WING_RATE[L - 1] : 1.75 + (L - 3) * 0.06;
+const wingDmg = L => L <= 0 ? 1 : L <= 3 ? WING_DMG[L - 1] : 1.3 + (L - 3) * 0.05;
 const wingCount = level => level === 0 ? 0 : level >= 3 ? 4 : 2;
+
+// Which drones should be flying: in campaign, two (or four) of one gun;
+// in endless, one per drone you have collected, each keeping its own gun.
+function wingRoster() {
+  const p = player;
+  if (!endless()) return new Array(wingCount(p.wingLevel)).fill(p.wingType);
+  const out = [];
+  for (let t = 0; t < WING_TYPES.length; t++) for (let k = 0; k < (p.wingCounts[t] || 0); k++) out.push(t);
+  return out;
+}
+const wingTotal = () => endless() ? player.wingCounts.reduce((a, b) => a + b, 0) : wingCount(player.wingLevel);
+
+// Slots fan out from the ship: two columns each side, four deep.
+function wingSlot(i) {
+  const side = i % 2 ? 1 : -1, k = (i / 2) | 0, col = k < 4 ? 0 : 1, row = k % 4;
+  return { side, dx: side * (30 + col * 19), dy: 12 + row * 13 };
+}
 
 function updateWings(dt) {
   const p = player;
-  const want = p.alive ? wingCount(p.wingLevel) : 0;
-  while (p.wings.length > want) p.wings.pop();
-  while (p.wings.length < want) {
+  const roster = p.alive ? wingRoster() : [];
+  if (p.wings.length > roster.length) p.wings.length = roster.length;
+  while (p.wings.length < roster.length) {
     const i = p.wings.length;
-    p.wings.push({ side: i % 2 ? 1 : -1, idx: i < 2 ? 0 : 1, x: p.x, y: p.y + 12, fireT: rand(0, 0.15), t: rand(TAU) });
+    p.wings.push({ type: roster[i], x: p.x, y: p.y + 12, fireT: rand(0, 0.15), t: rand(TAU) });
   }
+  for (let i = 0; i < p.wings.length; i++) p.wings[i].type = roster[i];
   if (!p.wings.length) return;
   const firing = p.alive && (Input.held('fire') || Game.autoFire || Pointer.dragging);
-  const rate = WING_RATE[p.wingLevel - 1] || 1, dmgF = WING_DMG[p.wingLevel - 1] || 1;
-  const type = p.wingType;
-  for (const wg of p.wings) {
+  const rate = wingRate(p.wingLevel), dmgF = wingDmg(p.wingLevel) * heroGrow();
+  p.wings.forEach((wg, i) => {
+    const slot = wingSlot(i);
+    wg.side = slot.side;
     wg.t += dt;
-    const tx = clamp(p.x + wg.side * (30 + wg.idx * 17), 8, W - 8);
-    const ty = p.y + 12 + wg.idx * 13 + Math.sin(wg.t * 3 + wg.idx) * 2;
+    const tx = clamp(p.x + slot.dx, 8, W - 8);
+    const ty = p.y + slot.dy + Math.sin(wg.t * 3 + i) * 2;
     const k = 1 - Math.exp(-7 * dt);
     wg.x += (tx - wg.x) * k; wg.y += (ty - wg.y) * k;
     wg.fireT -= dt;
-    if (!firing || wg.fireT > 0) continue;
-    if (type === 0) {
+    if (!firing || wg.fireT > 0) return;
+    if (wg.type === 0) {
       wg.fireT += 0.16 / rate;
       mkShot('wing', wg.x, wg.y - 8, 0, 820, 0.5 * dmgF, { r: 3.4, spr: 'wingI' });
-    } else if (type === 1) {
+    } else if (wg.type === 1) {
       wg.fireT += 0.3 / rate;
       for (const a of [-20, 20]) mkShot('wing', wg.x, wg.y - 8, a, 700, 0.45 * dmgF, { r: 3.4, spr: 'wingX' });
     } else {
       wg.fireT += 0.75 / rate;
-      const cands = targetable();
       let best = null, bd = Infinity;
-      for (const e of cands) { const d = dist2(wg.x, wg.y, e.x, e.y); if (d < bd) { bd = d; best = e; } }
-      const s = mkShot('missile', wg.x, wg.y - 6, wg.side * 18, 170, 0.9 * dmgF, { r: 4.5, target: best, turn: 4.5, speed: 170, life: 3, trailT: 0, wing: true });
+      for (const e of targetable()) { const d = dist2(wg.x, wg.y, e.x, e.y); if (d < bd) { bd = d; best = e; } }
+      const sp = 170 * heroGrow();
+      const s = mkShot('missile', wg.x, wg.y - 6, wg.side * 18, 170, 0.9 * dmgF, { r: 4.5, target: best, turn: 4.5, speed: sp, life: 3, trailT: 0, wing: true });
       s.ang = (wg.side * 18 - 90) * DEG;
     }
-    if (wg.idx === 0 && wg.side < 0) Sound.play('shot', type === 2 ? 3 : 0);
-  }
+    if (i === 0) Sound.play('shot', wg.type === 2 ? 3 : 0);
+  });
 }
 
 function drawWings() {
   const p = player;
   if (!p.wings.length) return;
-  const wt = WING_TYPES[p.wingType];
   const blink = p.invuln > 0 && Math.floor(p.invuln * 14) % 2 === 0;
+  // A big flight flies in smaller drones, so the ship and the bullets stay readable.
+  const sc = p.wings.length > 6 ? 0.76 : p.wings.length > 4 ? 0.88 : 1;
   for (const wg of p.wings) {
+    const wt = WING_TYPES[wg.type] || WING_TYPES[0];
     ctx.save();
     ctx.globalAlpha = blink ? 0.4 : 1;
     ctx.translate(wg.x, wg.y);
+    ctx.scale(sc, sc);
     ctx.fillStyle = 'rgba(0,0,0,0.28)';
     ctx.beginPath(); ctx.ellipse(9, 15, 8, 6, 0, 0, TAU); ctx.fill();
     const tilt = clamp((wg.x - p.x - wg.side * 30) * 0.01, -0.3, 0.3);
@@ -1684,7 +1732,7 @@ function jagged(points) {
 const arcWidth = L => 1.66 + L * 0.34;
 
 function fireArc(p, dmg0) {
-  const n = LV.arcN[p.level - 1];
+  const n = LV.arcN[lvI(p.level)];
   const cands = targetable();
   Sound.play('arc');
   if (!cands.length) {
@@ -1788,7 +1836,7 @@ function updateShots(dt) {
         const ta = angTo(s.x, s.y, s.target.x, s.target.y);
         s.ang += clamp(angDiff(s.ang, ta), -s.turn * dt, s.turn * dt);
       }
-      s.speed = Math.min(640, s.speed + 900 * dt);
+      s.speed = Math.min(640 * heroGrow(), s.speed + 900 * dt);
       s.vx = Math.cos(s.ang) * s.speed; s.vy = Math.sin(s.ang) * s.speed;
       s.trailT -= dt;
       if (s.trailT <= 0) { s.trailT = 0.03; part({ k: 'trail', x: s.x, y: s.y, r: 3, life: 0.35, max: 0.35 }); }
@@ -2327,13 +2375,32 @@ function collectPod(pd) {
       Sound.play('maxBonus');
       floatText(p.x, p.y - 34, '+3,000', C.brass, 1.8);
     }
+  } else if (pd.kind === 'G' && endless()) {
+    // Endless: every token adds a drone of that gun, up to five of each kind.
+    // Once a kind is full, the token trains the whole flight instead.
+    const t = pd.wing, g = WING_TYPES[t];
+    if (p.wingCounts[t] < WING_PER_TYPE) {
+      p.wingCounts[t]++;
+      if (p.wingLevel === 0) p.wingLevel = 1;
+      p.wingType = t;
+      Sound.play('powerup');
+      floatText(p.x, p.y - 34, g.name + ' ×' + p.wingCounts[t], g.glow, 1.6);
+    } else if (p.wingLevel < wingMax()) {
+      p.wingLevel++;
+      Sound.play('powerup');
+      floatText(p.x, p.y - 34, 'WINGMEN ' + p.wingLevel, g.glow, 1.7);
+    } else {
+      addScore(3000);
+      Sound.play('maxBonus');
+      floatText(p.x, p.y - 34, '+3,000', C.brass, 1.8);
+    }
   } else if (pd.kind === 'G') {
     if (p.wingLevel === 0) {
       p.wingLevel = 1; p.wingType = pd.wing;
       Sound.play('powerup');
       floatText(p.x, p.y - 34, 'WINGMEN', WING_TYPES[pd.wing].glow, 1.7);
     } else if (pd.wing === p.wingType) {
-      if (p.wingLevel < WING_MAX) {
+      if (p.wingLevel < wingMax()) {
         p.wingLevel++;
         Sound.play('powerup');
         floatText(p.x, p.y - 34, 'WINGMEN ' + p.wingLevel, WING_TYPES[pd.wing].glow, 1.7);
@@ -2348,10 +2415,10 @@ function collectPod(pd) {
       floatText(p.x, p.y - 34, WING_TYPES[pd.wing].name, WING_TYPES[pd.wing].glow, 1.6);
     }
   } else if (pd.kind === 'P' || pd.weapon === p.weapon) {
-    if (p.level < MAX_LEVEL) {
+    if (p.level < maxLevel()) {
       p.level++;
       Sound.play('powerup');
-      floatText(p.x, p.y - 34, p.level === MAX_LEVEL ? 'FULL POWER' : 'POWER UP', C.brass, 1.6);
+      floatText(p.x, p.y - 34, p.level === maxLevel() ? 'FULL POWER' : 'POWER UP', C.brass, 1.6);
     } else {
       addScore(5000);
       Sound.play('maxBonus');
@@ -2742,7 +2809,7 @@ function spawnBoss() {
   const n = Math.floor(Game.wave / 5);           // encounter number
   const idx = (n - 1) % BOSSES.length, loop = Math.floor((n - 1) / BOSSES.length);
   const def = BOSSES[idx];
-  const hp = def.hp * ENEMY_HP_SCALE * diff().bossHp * (1 + loop);
+  const hp = def.hp * ENEMY_HP_SCALE * diff().bossHp * (1 + loop) * (endless() ? waveHpMul() : 1);
   Game.bossesMet++;
   boss = {
     isBoss: true, def, idx, loop, x: W / 2, y: -160, hp, maxHp: hp, t: 0, r: 40,
@@ -3444,7 +3511,7 @@ function newRun() {
 }
 
 function endRun() {
-  if (Game.score > Game.best) { Game.best = Game.score; Game.newBest = Game.score > 0; }
+  if (Game.score > bestScore()) { Game.bests[Game.mode] = Game.score; Game.newBest = Game.score > 0; }
   Game.paused = false;
   Game.state = 'gameover';
   UI.sel = 0;
@@ -3607,11 +3674,14 @@ function menuMove(delta, count) {
   Sound.play('menuMove');
 }
 
-const TITLE_ITEMS = () => ['LAUNCH', 'FLIGHT MANUAL', Sound.muted ? 'SOUND: OFF' : 'SOUND: ON'];
+const TITLE_ITEMS = () => ['CAMPAIGN', 'ENDLESS', 'FLIGHT MANUAL', Sound.muted ? 'SOUND: OFF' : 'SOUND: ON'];
+const MODE_NAME = { campaign: 'CAMPAIGN', endless: 'ENDLESS' };
 function titleChoose(i) {
   UI.sel = i;
-  if (i === 0) { Game.state = 'difficulty'; UI.sel = Game.diff; Sound.play('menuSelect'); }
-  else if (i === 1) openManual('title');
+  if (i === 0 || i === 1) {
+    Game.mode = i === 0 ? 'campaign' : 'endless';
+    Game.state = 'difficulty'; UI.sel = Game.diff; Sound.play('menuSelect');
+  } else if (i === 2) openManual('title');
   else toggleMute();
 }
 function diffChoose(i) { Game.diff = i; Game.state = 'pilot'; UI.sel = Game.pilotIdx; Sound.play('menuSelect'); }
@@ -3713,6 +3783,15 @@ function menuItem(label, x, y, selected, fn, px = 2.4) {
   } else drawText(label, x, y, px, 'rgba(242,234,216,0.72)', 'center');
 }
 
+// A row of level pips that fits whatever the cap is.
+function drawPips(x, y, width, total, filled, color) {
+  const gap = total > 10 ? 1 : 1.5, pw = (width - gap * (total - 1)) / total;
+  for (let i = 0; i < total; i++) {
+    ctx.fillStyle = i < filled ? color : 'rgba(242,234,216,0.15)';
+    ctx.fillRect(x + i * (pw + gap), y, pw, 5);
+  }
+}
+
 function hint(text, y) { drawText(text, W / 2, y, 1.2, 'rgba(242,234,216,0.5)', 'center'); }
 
 function meridianLine(alpha = 0.3) {
@@ -3744,9 +3823,9 @@ function drawTitle() {
   const bob = Math.sin(UI.t * 2) * 5;
   drawPlayerShip(PILOTS[Game.pilotIdx], W / 2, 400 + bob, Math.sin(UI.t * 0.9) * 0.3, UI.t, 1.8);
   const items = TITLE_ITEMS();
-  items.forEach((it, i) => menuItem(it, W / 2, 500 + i * 42, UI.sel === i, () => titleChoose(i)));
-  drawText('BEST ' + fmt(Game.best), W / 2, 640, 1.6, 'rgba(242,234,216,0.8)', 'center');
-  hint(Pointer.touchMode ? 'TAP TO CHOOSE' : '↑↓ MOVE · Z OR ENTER CHOOSE · X BACK', 672);
+  items.forEach((it, i) => menuItem(it, W / 2, 486 + i * 40, UI.sel === i, () => titleChoose(i)));
+  drawText('BEST · CAMPAIGN ' + fmt(Game.bests.campaign) + ' · ENDLESS ' + fmt(Game.bests.endless), W / 2, 654, 1.2, 'rgba(242,234,216,0.8)', 'center');
+  hint(Pointer.touchMode ? 'TAP TO CHOOSE' : '↑↓ MOVE · Z OR ENTER CHOOSE · X BACK', 676);
 }
 
 // ---- Difficulty -----------------------------------------------------------------------------------------
@@ -3754,8 +3833,9 @@ function drawDifficulty() {
   Ground.draw(); Ground.drawClouds();
   ctx.fillStyle = 'rgba(5,7,12,0.55)'; ctx.fillRect(0, 0, W, H);
   vignette();
-  drawText('SELECT LEVEL', W / 2, 44, 2.6, C.ink, 'center', 4);
-  drawText('FIVE LEVELS · +10% HULL AND +2% BULLET SPEED PER STEP', W / 2, 74, 1.1, 'rgba(242,234,216,0.55)', 'center');
+  drawText('SELECT LEVEL', W / 2, 40, 2.6, C.ink, 'center', 4);
+  drawText(MODE_NAME[Game.mode] + (endless() ? ' · WAVES NEVER STOP, AND NEITHER DO YOU' : ' · FIVE LEVELS, +10% HULL AND +2% BULLETS PER STEP'),
+    W / 2, 70, 1.05, endless() ? 'rgba(232,182,76,0.85)' : 'rgba(242,234,216,0.55)', 'center');
   DIFFS.forEach((d, i) => {
     const x = 36, y = 100 + i * 96, w = W - 72, h = 86, sel = UI.sel === i;
     UI.button(x, y, w, h, () => { if (UI.sel === i) diffChoose(i); else { UI.sel = i; Sound.play('menuMove'); } });
@@ -3848,9 +3928,9 @@ function drawHUD() {
   drawText('SCORE', 14, 10, 1.1, 'rgba(242,234,216,0.55)');
   drawText(fmt(Game.score), 14, 22, 2.4, C.ink, 'left', 2);
   drawText('BEST', W - 54, 10, 1.1, 'rgba(242,234,216,0.55)', 'right');
-  drawText(fmt(Math.max(Game.best, Game.score)), W - 54, 22, 1.6, 'rgba(242,234,216,0.8)', 'right');
-  drawText('WAVE ' + Game.wave, W / 2, 10, 1.2, 'rgba(242,234,216,0.6)', 'center');
-  drawText(REGIONS[Ground.region], W / 2, 22, 1.1, 'rgba(232,182,76,0.6)', 'center');
+  drawText(fmt(Math.max(bestScore(), Game.score)), W - 54, 22, 1.6, 'rgba(242,234,216,0.8)', 'right');
+  drawText((endless() ? 'ENDLESS · WAVE ' : 'WAVE ') + Game.wave, W / 2, 10, 1.2, endless() ? 'rgba(232,182,76,0.8)' : 'rgba(242,234,216,0.6)', 'center');
+  drawText(REGIONS[Ground.region] + (endless() && Game.wave > ENDLESS_HERO_FROM ? ' · ×' + heroGrow().toFixed(2) : ''), W / 2, 22, 1.1, 'rgba(232,182,76,0.6)', 'center');
 
   // chain
   if (Game.chain > 0) {
@@ -3900,19 +3980,20 @@ function drawHUD() {
   ctx.fillStyle = w.color; roundRect(cx - 100, H - 40, 15, 22, 7); ctx.fill();
   drawText(w.key, cx - 92.5, H - 35, 1.6, '#0b0f1a', 'center');
   drawText(w.name, cx - 80, H - 40, 1.4, C.ink);
-  for (let i = 0; i < MAX_LEVEL; i++) {
-    ctx.fillStyle = i < p.level ? w.glow : 'rgba(242,234,216,0.15)';
-    ctx.fillRect(cx - 80 + i * 6, H - 25, 4.5, 5);
-  }
-  if (p.level === MAX_LEVEL) drawText('MAX', cx - 14, H - 26, 1, C.brass);
+  drawPips(cx - 80, H - 25, 66, maxLevel(), p.level, w.glow);
+  if (p.level >= maxLevel()) drawText('MAX', cx - 10, H - 26, 1, C.brass);
   if (p.wingLevel > 0) {
     const g = WING_TYPES[p.wingType];
     ctx.fillStyle = g.color;
     for (const sx of [cx + 20, cx + 30]) { ctx.beginPath(); ctx.moveTo(sx, H - 40); ctx.lineTo(sx + 4, H - 31); ctx.lineTo(sx - 4, H - 31); ctx.fill(); }
-    drawText(g.name, cx + 40, H - 40, 1.3, C.ink);
-    for (let i = 0; i < WING_MAX; i++) {
-      ctx.fillStyle = i < p.wingLevel ? g.glow : 'rgba(242,234,216,0.15)';
-      ctx.fillRect(cx + 40 + i * 11, H - 25, 8, 5);
+    drawText(endless() ? 'WING ×' + wingTotal() : g.name, cx + 40, H - 40, 1.3, C.ink);
+    drawPips(cx + 40, H - 25, 56, wingMax(), p.wingLevel, g.glow);
+    if (endless()) {
+      // one dot per drone, in its own gun's colour
+      player.wings.forEach((wg, i) => {
+        ctx.fillStyle = WING_TYPES[wg.type].color;
+        ctx.beginPath(); ctx.arc(cx + 22 + (i % 8) * 7, H - 46 - ((i / 8) | 0) * 6, 2, 0, TAU); ctx.fill();
+      });
     }
   }
   if (Game.autoFire) drawText('AUTO', W - 26, 50, 1.1, C.signal, 'center');
@@ -4132,7 +4213,7 @@ function manualPods(x, y, w) {
     yy += 16;
   });
   yy += 2;
-  yy += serif('Level 2 lifts their rate of fire; level 3 puts a second drone on each side. Losing a ship costs one wingman level. Wingmen fire whenever you do and cannot be hit.', x, yy, 11, INK, { width: w, lh: 13 }) + 8;
+  yy += serif('Level 2 lifts their rate of fire; level 3 puts a second drone on each side. Losing a ship costs one wingman level. Wingmen fire whenever you do and cannot be hit. In Endless a token adds a drone of that gun instead, up to five of each kind, and trains the flight to level 15 once a kind is full.', x, yy, 11, INK, { width: w, lh: 13 }) + 8;
   ctx.fillStyle = C.paperRule; ctx.fillRect(x, yy, w, 1);
   serif('Pods bounce off the edges. Every cycling token changes type every five seconds and disappears once it has shown all of them: 35 seconds for a weapon capsule, 15 for a wingman token. A gold P, bomb or ship token lasts 35 seconds. All of them blink for their last three seconds.', x, yy + 9, 11, INK2, { width: w, lh: 13, italic: true });
 }
@@ -4155,6 +4236,7 @@ function manualPilots(x, y, w) {
 
 function manualNotes(x, y, w) {
   const notes = [
+    ['MODES', 'Campaign runs the wave curves the game was tuned around. Endless never stops: enemies gain 2% health and 1% bullet speed every wave, your weapon and wingmen train to level 15, wingman tokens add drones instead of swapping guns (five of each kind), and from wave 20 your damage, bullet speed and handling each grow 2% a wave.'],
     ['BOMBS', 'A bomb erases every enemy bullet on screen (10 points each), damages everything for about a second and a half, and makes you untouchable for nearly three seconds.'],
     ['LOSING A SHIP', 'Costs two weapon levels and one wingman level; the lost power drops as a gold P where you went down. The next ship flies in with three seconds of invulnerability and bombs refilled.'],
     ['CHAIN', 'Each kill within 1.6 seconds of the last extends your chain. Every five kills adds ×1 to the multiplier, up to ×8. Losing a ship resets it.'],
@@ -4183,8 +4265,8 @@ function drawGameOver() {
   drawText('SCORE', W / 2, 258, 1.4, 'rgba(242,234,216,0.6)', 'center');
   drawText(fmt(Game.score), W / 2, 278, 4.2, C.ink, 'center', 6);
   if (Game.newBest && Math.floor(UI.t * 3) % 2 === 0) drawText('NEW BEST', W / 2, 322, 2, C.brass, 'center', 6);
-  else drawText('BEST ' + fmt(Game.best), W / 2, 324, 1.5, 'rgba(242,234,216,0.7)', 'center');
-  const info = 'WAVE ' + Game.wave + ' · ' + player.pilot.name + ' · ' + diff().name;
+  else drawText('BEST ' + fmt(bestScore()), W / 2, 324, 1.5, 'rgba(242,234,216,0.7)', 'center');
+  const info = MODE_NAME[Game.mode] + ' · WAVE ' + Game.wave + ' · ' + player.pilot.name + ' · ' + diff().name;
   drawText(info, W / 2, 360, 1.3, C.brass, 'center');
   ctx.fillStyle = 'rgba(232,182,76,0.5)'; ctx.fillRect(W / 2 - 150, 386, 300, 1);
   OVER_ITEMS.forEach((it, i) => menuItem(it, W / 2, 430 + i * 44, UI.sel === i, () => overChoose(i)));

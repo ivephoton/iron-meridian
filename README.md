@@ -6,6 +6,26 @@ A vertical scrolling shooter in the Raiden mould. One HTML file, no build step, 
 
 ---
 
+## Modes
+
+Two ways to fly, chosen from the title screen. Both use the five levels below, and each keeps its own best score.
+
+| | Campaign | Endless |
+|---|---|---|
+| Waves | Endless, on the original curves that level off around wave 20 | Endless, and nothing ever levels off |
+| Enemy health | +8.5% of base per wave | **+2% per wave, compounding, for ever** |
+| Enemy bullet speed | Up to +35%, reached around wave 20 | **+1% per wave, compounding, for ever** |
+| Weapon levels | 10 | **15** |
+| Wingman levels | 3 | **15** |
+| Wingman tokens | A different gun swaps your flight over | **A different gun adds a drone: five of each kind, fifteen in all** |
+| Your own growth | None | **From wave 20: +2% damage, +2% bullet speed and +2% movement speed every wave** |
+
+In Endless the HUD reads `ENDLESS · WAVE n`, and once your own growth starts it shows the current multiplier beside the region name.
+
+Endless is gentler than Campaign for the first twenty waves and harder for ever afterwards: by wave 50 enemies carry 2.6× their base health and shoot 63% faster, while your damage, bullets and handling are 1.8× what they were.
+
+---
+
 ## Controls
 
 | | Keyboard | Touch / mouse |
@@ -31,7 +51,7 @@ The pause screen is a five-page flight manual (Controls, Weapons, Pods, Pilots, 
 
 ## Weapons
 
-Seven weapons, ten power levels each.
+Seven weapons, ten power levels each in Campaign and fifteen in Endless.
 
 | | Weapon | Behaviour | Level 1 → 10 |
 |---|---|---|---|
@@ -43,7 +63,7 @@ Seven weapons, ten power levels each.
 | **F** | Flak | Shells that burst into shrapnel a short way ahead of you | One shell → three, six splinters per burst → sixteen |
 | **R** | Ripper | Sawblades that ricochet off the walls and keep cutting | One blade → four, three bounces → eight |
 
-Past level five, each pod adds damage rather than another barrel.
+Past level five, each pod adds damage rather than another barrel, and that is all the levels past ten do in Endless.
 
 Hornet warheads spread themselves across different targets and prefer ones outside the column in front of you, since the nose gun already covers that.
 
@@ -57,7 +77,7 @@ Ripper blades bounce off the side walls and the top of the screen, and cut the s
 
 Five kinds, all easy to tell apart:
 
-- **Gold round P**: raises the level of the weapon you are flying, up to ten.
+- **Gold round P**: raises the level of the weapon you are flying, up to ten (fifteen in Endless).
 - **Coloured capsule with a letter**: switches to that weapon and **keeps the level you already have**, so changing weapons never costs you power. Picking up the letter you are already flying raises the level instead.
 - **Dark B token**: a spare bomb, up to ten in hand. Tanks, spinners, gunships and frigates carry them, and so does every boss.
 - **Green 1UP token**: a spare ship, up to nine in reserve. The heavier craft carry them, rarely.
@@ -105,6 +125,13 @@ Three guns, and the token cycles through them every five seconds, exactly like a
 
 Picking up the letter your wingmen already carry raises their level. **A different letter only changes their gun: the level you have reached is kept**, so trying another gun never costs you anything. Losing a ship costs one wingman level.
 
+In **Endless** the tokens work differently, and the flight grows instead of changing:
+
+- Every token **adds a drone** flying that gun, up to **five of each kind** — fifteen drones in all, arranged two columns deep on each side of you.
+- Once a kind is full, a token of that kind **trains the whole flight** instead, up to **level 15**.
+- Levels past three keep paying out: each one adds 6% to their rate of fire and 5% to their damage.
+- Drones each keep their own gun, and the HUD shows one coloured dot per drone.
+
 ---
 
 ## Pilots
@@ -133,7 +160,7 @@ Losing a ship costs two weapon levels and one wingman level, and the lost power 
 
 ## Levels
 
-Five difficulty levels. **Level 3 is the base the game is tuned around.** Each step up multiplies the health of every enemy and boss by 1.1 and the speed of every enemy bullet by 1.02; each step down divides by the same.
+Five difficulty levels, used by both modes. **Level 3 is the base the game is tuned around.** Each step up multiplies the health of every enemy and boss by 1.1 and the speed of every enemy bullet by 1.02; each step down divides by the same.
 
 | | Level | Enemy and boss health | Enemy bullet speed |
 |---|---|---|---|
@@ -250,8 +277,11 @@ The balance lives in plain constants near the top of `index.html`:
 |---|---|
 | `ENEMY_HP_SCALE` | Health of every enemy and boss, on every wave and difficulty (currently `0.385`) |
 | `ENEMY_BULLET_SCALE` | Speed of every enemy and boss bullet, on every wave and difficulty (currently `0.805`) |
-| `MAX_LEVEL` | Power levels per weapon (currently `10`) |
-| `WING_MAX` | Wingman levels (currently `3`) |
+| `MAX_LEVEL`, `MAX_LEVEL_ENDLESS` | Power levels per weapon (currently `10` and `15`) |
+| `WING_MAX`, `WING_MAX_ENDLESS` | Wingman levels (currently `3` and `15`) |
+| `WING_PER_TYPE` | Drones of each kind you may hold in Endless (currently `5`) |
+| `ENDLESS_HP_STEP`, `ENDLESS_BULLET_STEP` | What Endless multiplies enemy health and bullet speed by each wave (currently `1.02` and `1.01`) |
+| `ENDLESS_HERO_STEP`, `ENDLESS_HERO_FROM` | Your own growth per wave and the wave it starts (currently `1.02` and `20`) |
 | `LV` | The per-level tables: streams, beams, orbs, warheads, strikes, shells, splinters, blades and bounces |
 | `WING_TYPES`, `WING_RATE`, `WING_DMG` | The three wingman guns, and what each level adds |
 | `DIFFS` | The five levels in the table above, built from the two step constants |
