@@ -34,9 +34,23 @@ const BASE_BOMBS = 3;
 // Power levels per weapon, and levels of wingmen. Endless mode raises both.
 const MAX_LEVEL = 10;
 const WING_MAX = 3;
-const MAX_LEVEL_ENDLESS = 15;
-const WING_MAX_ENDLESS = 15;
+const MAX_LEVEL_ENDLESS = 35;
+const WING_MAX_ENDLESS = 35;
 const WING_PER_TYPE = 5;          // endless: drones you may hold of each kind
+
+// Every combat spawn is this much larger. Bosses and the scripted pod carrier
+// are deliberately excluded: the carrier is how pods reach you, not a threat.
+// Fractions are settled by chance, so a lone gunship becomes two half the time
+// rather than always — the average is exactly this multiplier.
+const ENEMY_COUNT_SCALE = 1.5;
+
+// Endless: your ship gains another kind of bullet every this many waves, up to
+// one of every weapon (wave 5 gives two kinds, wave 30 gives all seven). The
+// extra kinds are redrawn at random at the start of every wave.
+const BULLET_KIND_EVERY = 5;
+// What the extra kinds hit for, relative to the weapon you actually collected.
+// Drop this below 1 to stack more guns without multiplying your damage.
+const EXTRA_KIND_DMG = 1;
 
 // Endless mode: every wave stiffens the opposition, and from wave 20 your own
 // ship and wingmen start growing too.
@@ -1281,6 +1295,10 @@ const waveFormMul = () => 1 + Math.min(0.5, wIdx() * 0.028);     // up to 50% la
 const heroGrow = () => endless() && Game.wave > ENDLESS_HERO_FROM ? Math.pow(ENDLESS_HERO_STEP, Game.wave - ENDLESS_HERO_FROM) : 1;
 const maxLevel = () => endless() ? MAX_LEVEL_ENDLESS : MAX_LEVEL;
 const wingMax = () => endless() ? WING_MAX_ENDLESS : WING_MAX;
+// Endless only: how many kinds of bullet the ship fires at once. One to begin
+// with, a second from wave 5, a third from wave 10, and so on to all seven.
+const bulletKinds = () => endless()
+  ? clamp(1 + Math.floor((Game.wave || 1) / BULLET_KIND_EVERY), 1, WEAPONS.length) : 1;
 const startBombs = () => BASE_BOMBS + player.pilot.bombs;
 
 function addScore(n) { Game.score += n; }
@@ -1382,13 +1400,36 @@ function resetPlayer() {
   const pl = PILOTS[Game.pilotIdx], d = diff();
   Object.assign(player, {
     pilot: pl, x: W / 2, y: H + 40, vx: 0, vy: 0, bank: 0, t: 0,
-    weapon: 0, level: 1,
+    weapon: 0, level: 1, extraWeapons: [],
     wingLevel: 0, wingType: 0, wings: [], wingCounts: [0, 0, 0],
     ships: Math.max(1, d.ships + pl.ships), bombs: BASE_BOMBS + pl.bombs,
     alive: true, invuln: 2.5, respawnT: 0, enterT: 0.9,
-    fireT: 0, fireT2: 0, slow: false, coreGlow: 0,
+    fireT: 0, fireT2: 0, fireTs: [], fireT2s: [], slow: false, coreGlow: 0,
   });
+  syncWeapons(player);
 }
+
+// The kinds of bullet the ship is firing: slot 0 is always the weapon you
+// collected, the rest are this wave's random draw. Called whenever either the
+// collected weapon or the wave changes, so the extras never duplicate slot 0
+// and the list is always exactly bulletKinds() long.
+function syncWeapons(p) {
+  const want = bulletKinds() - 1;
+  let extra = (p.extraWeapons || []).filter(w => w !== p.weapon);
+  if (extra.length > want) extra.length = want;
+  if (extra.length < want) {
+    const pool = [];
+    for (let i = 0; i < WEAPONS.length; i++) if (i !== p.weapon && !extra.includes(i)) pool.push(i);
+    for (let i = pool.length - 1; i > 0; i--) { const j = randi(0, i); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+    extra = extra.concat(pool.slice(0, want - extra.length));
+  }
+  p.extraWeapons = extra;
+}
+
+// Reroll the extra kinds from scratch — one fresh draw at the start of a wave.
+function rollWeapons(p) { p.extraWeapons = []; syncWeapons(p); }
+
+const activeWeapons = p => [p.weapon, ...p.extraWeapons];
 
 function respawn() {
   const p = player;
@@ -1470,9 +1511,18 @@ function updatePlayer(dt) {
   p.bank += (bankT - p.bank) * Math.min(1, dt * 9);
 
   const firing = Input.held('fire') || Game.autoFire || Pointer.dragging;
-  p.fireT -= dt; p.fireT2 -= dt;
+  // Every kind of bullet runs its own pair of cooldowns, so a slow weapon in
+  // one slot never gates a fast one in another.
+  const slots = activeWeapons(p).length;
+  for (let s = 0; s < slots; s++) {
+    p.fireTs[s] = (p.fireTs[s] || 0) - dt;
+    p.fireT2s[s] = (p.fireT2s[s] || 0) - dt;
+  }
   if (firing) fireWeapon(p);
-  else { p.fireT = Math.max(p.fireT, 0); p.fireT2 = Math.max(p.fireT2, 0); }
+  else for (let s = 0; s < slots; s++) {
+    p.fireTs[s] = Math.max(p.fireTs[s], 0);
+    p.fireT2s[s] = Math.max(p.fireT2s[s], 0);
+  }
 }
 
 // ---- Weapons -----------------------------------------------------------------------------
@@ -1516,11 +1566,27 @@ function targetable() {
 // The level tables run to ten; past that the extra levels pay in damage.
 const lvI = L => Math.min(L, 10) - 1;
 
+// Fire every kind the ship currently carries. Each slot borrows p.fireT /
+// p.fireT2 for the duration of its own call and hands the values back, so the
+// per-weapon code below stays exactly as it was when there was only one kind.
 function fireWeapon(p) {
-  const pl = p.pilot, dm = pl.damage * overLv(p.level) * heroGrow(), fr = pl.fireRate, L = lvI(p.level) + 1;
+  const list = activeWeapons(p);
+  for (let s = 0; s < list.length; s++) {
+    p.fireT = p.fireTs[s] || 0;
+    p.fireT2 = p.fireT2s[s] || 0;
+    fireOne(p, list[s], s);
+    p.fireTs[s] = p.fireT;
+    p.fireT2s[s] = p.fireT2;
+  }
+}
+
+function fireOne(p, weapon, slot) {
+  const pl = p.pilot;
+  const dm = pl.damage * overLv(p.level) * heroGrow() * (slot > 0 ? EXTRA_KIND_DMG : 1);
+  const fr = pl.fireRate, L = lvI(p.level) + 1;
   const x = p.x, y = p.y - 14;
   let guard = 0;
-  switch (p.weapon) {
+  switch (weapon) {
     case 0: { // Vulcan
       const n = LV.vulcanN[lvI(L)], sp = LV.vulcanSp[lvI(L)];
       while (p.fireT <= 0 && guard++ < 3) {
@@ -1995,8 +2061,13 @@ function drawShots() {
 // ---- Enemies -------------------------------------------------------------------------------
 function newFormation(total) { return { total, killed: 0, escaped: 0, done: false }; }
 
+// Ceiling on live enemies, so a busy wave can't drag the frame rate down. It
+// scales with ENEMY_COUNT_SCALE: leaving it at 80 would silently swallow the
+// extra spawns exactly when the screen is busiest.
+const MAX_ENEMIES = Math.round(80 * ENEMY_COUNT_SCALE);
+
 function spawnEnemy(type, x, y, opts) {
-  if (enemies.length > 80) return null;
+  if (enemies.length > MAX_ENEMIES) return null;
   const et = ETYPES[type], d = diff();
   const hp = et.hp * ENEMY_HP_SCALE * d.hull * waveHpMul();
   const e = {
@@ -2426,6 +2497,7 @@ function collectPod(pd) {
     }
   } else {
     p.weapon = pd.weapon;
+    syncWeapons(p);   // keep the extra kinds from duplicating the new primary
     Sound.play('weapon');
     floatText(p.x, p.y - 34, WEAPONS[pd.weapon].name, WEAPONS[pd.weapon].glow, 1.6);
   }
@@ -3336,7 +3408,13 @@ const Director = {
   },
 };
 
-function fsize(base) { return Math.max(2, Math.round(base * diff().formation * waveFormMul())); }
+function fsize(base) { return Math.max(2, Math.round(base * ENEMY_COUNT_SCALE * diff().formation * waveFormMul())); }
+// Scale a small, fixed spawn count. The fractional part is settled by a coin
+// weighted to it, so counts that can't divide evenly still average out right.
+function ecount(base) {
+  const v = base * ENEMY_COUNT_SCALE, n = Math.floor(v);
+  return Math.max(1, n + (chance(v - n) ? 1 : 0));
+}
 function dartShots() {
   if (Game.wave === 1 && Director.t < 8) return 0;
   return chance(Math.min(0.8, 0.25 + 0.045 * Game.wave)) ? 1 : 0;
@@ -3402,7 +3480,7 @@ function spawnGroup(id) {
       break;
     }
     case 'drones': {
-      const cnt = n >= 6 ? 3 : 2;
+      const cnt = ecount(n >= 6 ? 3 : 2);
       for (let i = 0; i < cnt; i++) {
         const x = (i + 1) * W / (cnt + 1) + rand(-24, 24);
         spawnEnemy('drone', x, -20, { ty: rand(90, 230), hx: x, ph: rand(TAU), side: x < W / 2 ? -1 : 1, t: -i * 0.35 });
@@ -3415,7 +3493,7 @@ function spawnGroup(id) {
       break;
     }
     case 'tanks': {
-      const cnt = randi(2, 3) + (n >= 7 ? 1 : 0);
+      const cnt = ecount(randi(2, 3) + (n >= 7 ? 1 : 0));
       for (let i = 0; i < cnt; i++) {
         const vx = rand(-12, 12), vy = rand(8, 26);
         spawnEnemy('tank', rand(40, W - 40), -24 - i * 46, { vx, vy, hullA: Math.atan2(vy, vx), tur: Math.PI / 2, tread: 0, fireT: rand(1, 2.2) });
@@ -3423,29 +3501,35 @@ function spawnGroup(id) {
       break;
     }
     case 'spinner': {
-      const cnt = n >= 9 && chance(0.4) ? 2 : 1;
+      const cnt = ecount(n >= 9 && chance(0.4) ? 2 : 1);
       for (let i = 0; i < cnt; i++) {
-        const x = cnt === 1 ? rand(120, W - 120) : (i ? W * 0.72 : W * 0.28);
+        // one spinner drops anywhere; several spread evenly across the lane
+        const x = cnt === 1 ? rand(120, W - 120) : W * (i + 1) / (cnt + 1);
         spawnEnemy('spinner', x, -24, { ty: rand(120, 220), spin: 0, sa: rand(TAU), dir: chance(0.5) ? 1 : -1 });
       }
       break;
     }
-    case 'gunship':
-      spawnEnemy('gunship', rand(120, W - 120), -40, { ty: rand(130, 190) });
+    case 'gunship': {
+      const cnt = ecount(1);
+      for (let i = 0; i < cnt; i++) spawnEnemy('gunship', rand(120, W - 120), -40 - i * 54, { ty: rand(130, 190) });
       break;
+    }
     case 'kamikaze': {
       const cnt = fsize(4), f = cnt >= 4 ? newFormation(cnt) : null;
       for (let i = 0; i < cnt; i++) spawnEnemy('kamikaze', rand(30, W - 30), -20, { speed: 110, ang: Math.PI / 2, t: -i * 0.35, formation: f });
       break;
     }
-    case 'frigate':
-      spawnEnemy('frigate', rand(150, W - 150), -60, { ty: rand(140, 180) });
+    case 'frigate': {
+      const cnt = ecount(1);
+      for (let i = 0; i < cnt; i++) spawnEnemy('frigate', rand(150, W - 150), -60 - i * 76, { ty: rand(140, 180) - i * 22 });
       break;
+    }
   }
 }
 
 function startWave(n) {
   Game.wave = n;
+  rollWeapons(player);   // endless: a fresh draw of extra bullet kinds each wave
   const D = Director;
   D.t = 0; D.clearT = 0; D.nextT = 0;
   const region = Math.floor((n - 1) / 5) % REGIONS.length;
@@ -3785,6 +3869,12 @@ function menuItem(label, x, y, selected, fn, px = 2.4) {
 
 // A row of level pips that fits whatever the cap is.
 function drawPips(x, y, width, total, filled, color) {
+  // Past fifteen there is no room for readable pips, so show a solid meter.
+  if (total > 15) {
+    ctx.fillStyle = 'rgba(242,234,216,0.15)'; ctx.fillRect(x, y, width, 5);
+    ctx.fillStyle = color; ctx.fillRect(x, y, width * clamp(filled / total, 0, 1), 5);
+    return;
+  }
   const gap = total > 10 ? 1 : 1.5, pw = (width - gap * (total - 1)) / total;
   for (let i = 0; i < total; i++) {
     ctx.fillStyle = i < filled ? color : 'rgba(242,234,216,0.15)';
@@ -3982,6 +4072,13 @@ function drawHUD() {
   drawText(w.name, cx - 80, H - 40, 1.4, C.ink);
   drawPips(cx - 80, H - 25, 66, maxLevel(), p.level, w.glow);
   if (p.level >= maxLevel()) drawText('MAX', cx - 10, H - 26, 1, C.brass);
+  else if (maxLevel() > 15) drawText(String(p.level), cx - 10, H - 26, 1, C.ink);
+  // the extra kinds of bullet, one lettered chip each, above the weapon badge
+  p.extraWeapons.forEach((wi, i) => {
+    const ew = WEAPONS[wi], ex = cx - 100 + i * 11;
+    ctx.fillStyle = ew.color; roundRect(ex, H - 52, 9, 9, 3); ctx.fill();
+    drawText(ew.key, ex + 4.5, H - 50, 1, '#0b0f1a', 'center');
+  });
   if (p.wingLevel > 0) {
     const g = WING_TYPES[p.wingType];
     ctx.fillStyle = g.color;
@@ -4164,16 +4261,16 @@ function manualWeapons(x, y, w) {
     yy += Math.max(26, h + 20);
   });
   ctx.fillStyle = C.paperRule; ctx.fillRect(x, yy + 2, w, 1);
-  serif('Every weapon runs from level 1 to level 10. Past level five each pod adds damage rather than another barrel. Losing a ship costs two levels.', x, yy + 10, 11.5, INK, { width: w, lh: 14, italic: true });
+  serif('Every weapon runs from level 1 to level ' + maxLevel() + '. Past level five each pod adds damage rather than another barrel. Losing a ship costs two levels.', x, yy + 10, 11.5, INK, { width: w, lh: 14, italic: true });
 }
 
 function manualPods(x, y, w) {
   const rows = [
-    ['gold', 'Gold round P raises the level of the weapon you are flying, up to ten.'],
+    ['gold', 'Gold round P raises the level of the weapon you are flying, up to ' + maxLevel() + '.'],
     ['capsule', 'A coloured capsule switches to that weapon and keeps the level you already have. The letter you are flying raises the level instead.'],
     ['bomb', 'A dark B token is a spare bomb, up to ten in hand. Tanks, spinners, gunships and frigates carry them, and so does every boss.'],
     ['ship', 'A green 1UP token is a spare ship, up to nine in reserve. The heavier craft carry them, rarely.'],
-    ['wing', 'A wingman token puts a drone on each side of you. The same letter again raises them a level, up to three; a different letter changes their gun and keeps the level they already have.'],
+    ['wing', 'A wingman token puts a drone on each side of you. The same letter again raises them a level, up to ' + wingMax() + '; a different letter changes their gun and keeps the level they already have.'],
   ];
   let yy = y;
   for (const [icon, text] of rows) {
@@ -4213,7 +4310,7 @@ function manualPods(x, y, w) {
     yy += 16;
   });
   yy += 2;
-  yy += serif('Level 2 lifts their rate of fire; level 3 puts a second drone on each side. Losing a ship costs one wingman level. Wingmen fire whenever you do and cannot be hit. In Endless a token adds a drone of that gun instead, up to five of each kind, and trains the flight to level 15 once a kind is full.', x, yy, 11, INK, { width: w, lh: 13 }) + 8;
+  yy += serif('Level 2 lifts their rate of fire; level 3 puts a second drone on each side. Losing a ship costs one wingman level. Wingmen fire whenever you do and cannot be hit. In Endless a token adds a drone of that gun instead, up to ' + WING_PER_TYPE + ' of each kind, and trains the flight to level ' + WING_MAX_ENDLESS + ' once a kind is full.', x, yy, 11, INK, { width: w, lh: 13 }) + 8;
   ctx.fillStyle = C.paperRule; ctx.fillRect(x, yy, w, 1);
   serif('Pods bounce off the edges. Every cycling token changes type every five seconds and disappears once it has shown all of them: 35 seconds for a weapon capsule, 15 for a wingman token. A gold P, bomb or ship token lasts 35 seconds. All of them blink for their last three seconds.', x, yy + 9, 11, INK2, { width: w, lh: 13, italic: true });
 }
@@ -4236,19 +4333,23 @@ function manualPilots(x, y, w) {
 
 function manualNotes(x, y, w) {
   const notes = [
-    ['MODES', 'Campaign runs the wave curves the game was tuned around. Endless never stops: enemies gain 2% health and 1% bullet speed every wave, your weapon and wingmen train to level 15, wingman tokens add drones instead of swapping guns (five of each kind), and from wave 20 your damage, bullet speed and handling each grow 2% a wave.'],
+    ['MODES', 'Campaign runs the wave curves the game was tuned around. Endless never stops: enemies gain 2% health and 1% bullet speed a wave, weapon and wingmen train to level ' + MAX_LEVEL_ENDLESS + ', tokens add drones rather than swap guns (' + WING_PER_TYPE + ' of each), and from wave ' + ENDLESS_HERO_FROM + ' your damage, bullets and handling grow 2% a wave.'],
+    ['BULLET KINDS', 'In Endless the ship fires several weapons at once: a second kind from wave ' + BULLET_KIND_EVERY + ', a third from wave ' + BULLET_KIND_EVERY * 2 + ', on to all ' + WEAPONS.length + ' by wave ' + BULLET_KIND_EVERY * (WEAPONS.length - 1) + '. Your collected capsule leads, the rest redraw each wave as chips above the weapon badge, all at its level.'],
     ['BOMBS', 'A bomb erases every enemy bullet on screen (10 points each), damages everything for about a second and a half, and makes you untouchable for nearly three seconds.'],
     ['LOSING A SHIP', 'Costs two weapon levels and one wingman level; the lost power drops as a gold P where you went down. The next ship flies in with three seconds of invulnerability and bombs refilled.'],
     ['CHAIN', 'Each kill within 1.6 seconds of the last extends your chain. Every five kills adds ×1 to the multiplier, up to ×8. Losing a ship resets it.'],
     ['FORMATIONS', 'Destroy every ship in a formation of four or more, with none escaping, for 200 points per ship times your multiplier.'],
     ['PICKUPS', 'Any pod is worth 250 points. A power-up at full power is worth 5,000 more; a bomb, ship or wingman token you cannot use is worth 2,000 to 3,000. Every wave sends at least one pod carrier.'],
-    ['BOSSES', 'Every fifth wave: Warden, Hydra, Seraph, Leviathan, then round again, tougher. Worth 20,000 times the bosses you have met.'],
+    ['BOSSES', 'Every fifth wave: Warden, Hydra, Seraph, Leviathan, then round again, tougher. Worth 20,000 times the bosses met.'],
   ];
   let yy = y;
+  // The page is a fixed height, so the gap between notes tightens as entries
+  // are added rather than letting the last one run under the buttons.
+  const gap = notes.length > 7 ? 2 : 9;
   for (const [h, t] of notes) {
     drawText(h, x, yy, 1.3, C.stamp);
     yy += 12;
-    yy += serif(t, x, yy, 11.5, INK, { width: w, lh: 14 }) + 9;
+    yy += serif(t, x, yy, 11.5, INK, { width: w, lh: 14 }) + gap;
   }
   if (UI.manualFrom === 'pause') {
     const line = 'WAVE ' + Game.wave + ' · ' + REGIONS[Ground.region] + ' · ' + player.pilot.name + ' · ' + diff().name;

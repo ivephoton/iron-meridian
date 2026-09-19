@@ -15,9 +15,10 @@ Two ways to fly, chosen from the title screen. Both use the five levels below, a
 | Waves | Endless, on the original curves that level off around wave 20 | Endless, and nothing ever levels off |
 | Enemy health | +8.5% of base per wave | **+2% per wave, compounding, for ever** |
 | Enemy bullet speed | Up to +35%, reached around wave 20 | **+1% per wave, compounding, for ever** |
-| Weapon levels | 10 | **15** |
-| Wingman levels | 3 | **15** |
+| Weapon levels | 10 | **35** |
+| Wingman levels | 3 | **35** |
 | Wingman tokens | A different gun swaps your flight over | **A different gun adds a drone: five of each kind, fifteen in all** |
+| Kinds of bullet at once | One | **One more every five waves, to all seven by wave 30** |
 | Your own growth | None | **From wave 20: +2% damage, +2% bullet speed and +2% movement speed every wave** |
 
 In Endless the HUD reads `ENDLESS · WAVE n`, and once your own growth starts it shows the current multiplier beside the region name.
@@ -51,7 +52,7 @@ The pause screen is a five-page flight manual (Controls, Weapons, Pods, Pilots, 
 
 ## Weapons
 
-Seven weapons, ten power levels each in Campaign and fifteen in Endless.
+Seven weapons, ten power levels each in Campaign and thirty-five in Endless.
 
 | | Weapon | Behaviour | Level 1 → 10 |
 |---|---|---|---|
@@ -63,7 +64,7 @@ Seven weapons, ten power levels each in Campaign and fifteen in Endless.
 | **F** | Flak | Shells that burst into shrapnel a short way ahead of you | One shell → three, six splinters per burst → sixteen |
 | **R** | Ripper | Sawblades that ricochet off the walls and keep cutting | One blade → four, three bounces → eight |
 
-Past level five, each pod adds damage rather than another barrel, and that is all the levels past ten do in Endless.
+Past level five, each pod adds damage rather than another barrel, and that is all the levels past ten do in Endless — level 35 hits for two and a half times level 1.
 
 Hornet warheads spread themselves across different targets and prefer ones outside the column in front of you, since the nose gun already covers that.
 
@@ -73,11 +74,23 @@ Flak shells burst about a third of the way up the screen, or on the first hull t
 
 Ripper blades bounce off the side walls and the top of the screen, and cut the same enemy again every third of a second, so a blade loose in a crowded lane does the work of several.
 
+### Firing more than one weapon (Endless)
+
+In Endless the ship stops being a one-gun aircraft. From **wave 5** it fires two kinds of bullet at once, from **wave 10** three, from **wave 15** four, and so on — one more kind every five waves until all **seven** are firing together at **wave 30**.
+
+- The capsule you actually collected always leads, and is the one the gold P levels up.
+- The extra kinds are **drawn at random, fresh at the start of every wave**, so no two waves fly quite the same and you cannot build toward a fixed combination.
+- Every kind fires at the level your weapon has reached, and each runs **its own cooldown** — a slow Flak in one slot never holds up a fast Vulcan in another.
+- The HUD shows the extras as small lettered chips above your weapon badge.
+- Picking up a new capsule mid-wave re-deals the extras around it, so you never fire the same weapon twice.
+
+Campaign is untouched: one weapon, exactly as before.
+
 ### Pods
 
 Five kinds, all easy to tell apart:
 
-- **Gold round P**: raises the level of the weapon you are flying, up to ten (fifteen in Endless).
+- **Gold round P**: raises the level of the weapon you are flying, up to ten (thirty-five in Endless).
 - **Coloured capsule with a letter**: switches to that weapon and **keeps the level you already have**, so changing weapons never costs you power. Picking up the letter you are already flying raises the level instead.
 - **Dark B token**: a spare bomb, up to ten in hand. Tanks, spinners, gunships and frigates carry them, and so does every boss.
 - **Green 1UP token**: a spare ship, up to nine in reserve. The heavier craft carry them, rarely.
@@ -128,7 +141,7 @@ Picking up the letter your wingmen already carry raises their level. **A differe
 In **Endless** the tokens work differently, and the flight grows instead of changing:
 
 - Every token **adds a drone** flying that gun, up to **five of each kind** — fifteen drones in all, arranged two columns deep on each side of you.
-- Once a kind is full, a token of that kind **trains the whole flight** instead, up to **level 15**.
+- Once a kind is full, a token of that kind **trains the whole flight** instead, up to **level 35**.
 - Levels past three keep paying out: each one adds 6% to their rate of fire and 5% to their damage.
 - Drones each keep their own gun, and the HUD shows one coloured dot per drone.
 
@@ -179,6 +192,8 @@ Nothing else changes between levels: every level starts you with three ships, an
 Two constants set the overall pitch of the game: `ENEMY_HP_SCALE` (`0.385`) scales the health of everything you shoot at, and `ENEMY_BULLET_SCALE` (`0.805`) scales the speed of every enemy and boss bullet. Raise either to make the game harder without touching anything else.
 
 Waves escalate endlessly. Each wave adds 8.5% of an enemy's base health to its hull. As the waves climb, enemies fire up to twice as often, shoot bullets up to 35% faster and fly in formations up to 50% larger, reaching those limits around wave 20. New enemy types join as you go:
+
+On top of all that, `ENEMY_COUNT_SCALE` (`1.5`) puts **half again as many enemies in every wave**, on both modes and every difficulty. It multiplies formation sizes and the fixed spawns alike; where a count cannot divide evenly — a lone gunship, say — the fraction is settled by a weighted coin, so you meet two gunships about half the time rather than always, and the average comes out at exactly 1.5×. The scripted pod carrier is left alone, since it is how pods reach you rather than a threat, and bosses are untouched. `MAX_ENEMIES`, the ceiling on live enemies, scales with it so the extra ships are not silently swallowed when the screen is busiest.
 
 | From wave | Enemies |
 |---|---|
@@ -277,9 +292,13 @@ The balance lives in plain constants near the top of `index.html`:
 |---|---|
 | `ENEMY_HP_SCALE` | Health of every enemy and boss, on every wave and difficulty (currently `0.385`) |
 | `ENEMY_BULLET_SCALE` | Speed of every enemy and boss bullet, on every wave and difficulty (currently `0.805`) |
-| `MAX_LEVEL`, `MAX_LEVEL_ENDLESS` | Power levels per weapon (currently `10` and `15`) |
-| `WING_MAX`, `WING_MAX_ENDLESS` | Wingman levels (currently `3` and `15`) |
+| `MAX_LEVEL`, `MAX_LEVEL_ENDLESS` | Power levels per weapon (currently `10` and `35`) |
+| `WING_MAX`, `WING_MAX_ENDLESS` | Wingman levels (currently `3` and `35`) |
 | `WING_PER_TYPE` | Drones of each kind you may hold in Endless (currently `5`) |
+| `ENEMY_COUNT_SCALE` | How many enemies every wave sends, on both modes (currently `1.5`) |
+| `MAX_ENEMIES` | Ceiling on live enemies, scaled from `ENEMY_COUNT_SCALE` (currently `120`) |
+| `BULLET_KIND_EVERY` | Waves between each extra kind of bullet in Endless (currently `5`) |
+| `EXTRA_KIND_DMG` | What the extra kinds hit for, relative to your collected weapon (currently `1`) |
 | `ENDLESS_HP_STEP`, `ENDLESS_BULLET_STEP` | What Endless multiplies enemy health and bullet speed by each wave (currently `1.02` and `1.01`) |
 | `ENDLESS_HERO_STEP`, `ENDLESS_HERO_FROM` | Your own growth per wave and the wave it starts (currently `1.02` and `20`) |
 | `LV` | The per-level tables: streams, beams, orbs, warheads, strikes, shells, splinters, blades and bounces |
